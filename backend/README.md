@@ -1,6 +1,6 @@
 # Prywatny backend LoL XP Tracker
 
-Cloudflare Worker ukrywa klucz Riot API przed aplikacjami desktopowymi. Wersja 0.8 dodaje panel właściciela, bezterminowe profile znajomych, wiele Riot ID w jednym profilu oraz alerty o nowych urządzeniach.
+Cloudflare Worker ukrywa klucz Riot API przed aplikacjami desktopowymi. Wersja 0.9 zawiera panel właściciela z bezterminowymi profilami znajomych, wieloma Riot ID, alertami urządzeń, wyszukiwaniem oraz filtrowaniem profili.
 
 ## Jak działa dostęp
 

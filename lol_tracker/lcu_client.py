@@ -97,3 +97,16 @@ class LcuClient:
             "puuid": data.get("puuid") or "",
             "platform": platform,
         }
+
+    def gameflow_phase(self) -> str:
+        """Return the current League client phase without failing account synchronization."""
+        try:
+            phase = self._get("/lol-gameflow/v1/gameflow-phase")
+        except LcuError:
+            return "Connected"
+        return str(phase or "Connected")
+
+    def live_snapshot(self) -> dict[str, Any]:
+        snapshot = self.current_summoner()
+        snapshot["gameflow_phase"] = self.gameflow_phase()
+        return snapshot

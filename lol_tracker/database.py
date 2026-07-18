@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     current_level INTEGER NOT NULL DEFAULT 1,
     current_xp INTEGER NOT NULL DEFAULT 0,
     xp_required INTEGER NOT NULL DEFAULT 0,
+    goal_level INTEGER NOT NULL DEFAULT 30,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(game_name COLLATE NOCASE, tag_line COLLATE NOCASE, platform COLLATE NOCASE)
@@ -87,6 +88,11 @@ class Database:
             for name, definition in migrations.items():
                 if name not in columns:
                     connection.execute(f"ALTER TABLE games ADD COLUMN {name} {definition}")
+            account_columns = {row[1] for row in connection.execute("PRAGMA table_info(accounts)")}
+            if "goal_level" not in account_columns:
+                connection.execute(
+                    "ALTER TABLE accounts ADD COLUMN goal_level INTEGER NOT NULL DEFAULT 30"
+                )
 
     @staticmethod
     def _now() -> str:
@@ -157,6 +163,16 @@ class Database:
                 WHERE id = ?
                 """,
                 (int(level), int(xp), int(xp_required), self._now(), account_id),
+            )
+
+    def update_account_goal(self, account_id: int, goal_level: int) -> None:
+        goal_level = int(goal_level)
+        if goal_level < 2 or goal_level > 30:
+            raise ValueError("Cel musi mieścić się między poziomem 2 i 30.")
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE accounts SET goal_level = ?, updated_at = ? WHERE id = ?",
+                (goal_level, self._now(), account_id),
             )
 
     def update_account_identity(
