@@ -1,0 +1,95 @@
+name: Publish release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app.py"
+      - "start.bat"
+      - "build_exe.bat"
+      - "requirements.txt"
+      - "README.md"
+      - "lol_tracker/**"
+      - "scripts/build_release.py"
+      - ".github/workflows/release.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run tests
+        run: python -m unittest discover -s tests -v
+      - name: Read version
+        id: version
+        shell: bash
+        run: |
+          VERSION="$(python -c 'from lol_tracker import __version__; print(__version__)')"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "archive=LoL-XP-Tracker-v$VERSION.zip" >> "$GITHUB_OUTPUT"
+      - name: Check whether release already exists
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build update archive and manifest
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCHIVE: ${{ steps.version.outputs.archive }}
+        shell: bash
+        run: |
+          mkdir -p dist-release
+          python scripts/build_release.py \
+            --version "$VERSION" \
+            --output "dist-release/$ARCHIVE" \
+            --manifest "dist-release/update-manifest.json" \
+            --notes "Wersja $VERSION opublikowana automatycznie przez GitHub Actions."
+      - name: Create GitHub Release
+        if: steps.existing.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCHIVE: ${{ steps.version.outputs.archive }}
+        shell: bash
+        run: |
+          gh release create "$TAG" "dist-release/$ARCHIVE#LoL XP Tracker $VERSION" \
+            --target "$GITHUB_SHA" \
+            --title "LoL XP Tracker $VERSION" \
+            --notes "Automatyczne wydanie wersji $VERSION. Paczka jest sprawdzana przez updater za pomocą SHA-256."
+      - name: Publish update manifest
+        if: steps.existing.outputs.exists == 'false'
+        shell: bash
+        run: |
+          cp dist-release/update-manifest.json update-manifest.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add update-manifest.json
+          git commit -m "Update manifest for v${{ steps.version.outputs.version }}"
+          git push origin HEAD:main
