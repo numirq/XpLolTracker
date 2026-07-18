@@ -1,107 +1,29 @@
-const PLATFORM_ROUTES = Object.freeze({
-  EUW1: "europe",
-  EUN1: "europe",
-  TR1: "europe",
-  RU: "europe",
-  NA1: "americas",
-  BR1: "americas",
-  LA1: "americas",
-  LA2: "americas",
-  KR: "asia",
-  JP1: "asia",
-  OC1: "sea",
-  PH2: "sea",
-  SG2: "sea",
-  TH2: "sea",
-  TW2: "sea",
-  VN2: "sea"
-});
+import {
+  ProxyError,
+  jsonBody,
+  jsonResponse,
+  normalizeAccountId,
+  platformRoute,
+  sha256Hex
+} from "./core.js";
+import {
+  addFriendAccount,
+  adminOverview,
+  authorizeAccount,
+  authorizeRequest,
+  cleanupLogs,
+  createFriend,
+  deleteDevice,
+  deleteFriendAccount,
+  recordActivity,
+  requireAdmin,
+  rotateFriendCode,
+  updateDevice,
+  updateFriend
+} from "./access.js";
+import { adminPageResponse } from "./admin_page.js";
 
-export class ProxyError extends Error {
-  constructor(status, code, message, retryAfter = null) {
-    super(message);
-    this.status = status;
-    this.code = code;
-    this.retryAfter = retryAfter;
-  }
-}
-
-export function normalizeAccountId(gameName, tagLine) {
-  return `${String(gameName).normalize("NFKC").trim()}#${String(tagLine).normalize("NFKC").trim()}`
-    .toLocaleLowerCase("en-US");
-}
-
-export function platformRoute(platform) {
-  const normalized = String(platform || "").toUpperCase();
-  const region = PLATFORM_ROUTES[normalized];
-  if (!region) {
-    throw new ProxyError(400, "invalid_platform", "Nieobsługiwany serwer Riot.");
-  }
-  return { platform: normalized, region };
-}
-
-export async function sha256Hex(value) {
-  const bytes = new TextEncoder().encode(value);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function parseAccessRules(rawRules) {
-  try {
-    const parsed = JSON.parse(rawRules || "{}");
-    if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
-      throw new Error("ACCESS_RULES must be an object");
-    }
-    return parsed;
-  } catch {
-    throw new ProxyError(
-      503,
-      "access_rules_invalid",
-      "Właściciel musi poprawić konfigurację dostępu na serwerze."
-    );
-  }
-}
-
-export async function authorizeAccount(authorization, rawRules, gameName, tagLine) {
-  if (!authorization || !authorization.startsWith("Bearer ")) {
-    throw new ProxyError(401, "access_denied", "Brak kodu dostępu do prywatnego serwera.");
-  }
-  const token = authorization.slice(7).trim();
-  if (token.length < 24 || token.length > 256) {
-    throw new ProxyError(401, "access_denied", "Kod dostępu jest nieprawidłowy.");
-  }
-  const tokenHash = await sha256Hex(token);
-  const rules = parseAccessRules(rawRules);
-  const allowedAccounts = rules[tokenHash];
-  if (!Array.isArray(allowedAccounts)) {
-    throw new ProxyError(401, "access_denied", "Kod dostępu jest nieprawidłowy.");
-  }
-  const requestedAccount = normalizeAccountId(gameName, tagLine);
-  const allowed = allowedAccounts.some((account) => {
-    const separator = String(account).lastIndexOf("#");
-    if (separator < 1) return false;
-    return normalizeAccountId(
-      String(account).slice(0, separator),
-      String(account).slice(separator + 1)
-    ) === requestedAccount;
-  });
-  if (!allowed) {
-    throw new ProxyError(403, "access_denied", "Ten kod nie ma dostępu do wybranego konta Riot.");
-  }
-}
-
-function jsonResponse(payload, status = 200, extraHeaders = {}) {
-  return new Response(JSON.stringify(payload), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff",
-      "referrer-policy": "no-referrer",
-      ...extraHeaders
-    }
-  });
-}
+export { ProxyError, normalizeAccountId, platformRoute, sha256Hex, authorizeAccount };
 
 async function riotJson(url, riotApiKey) {
   if (!riotApiKey) {
@@ -116,7 +38,7 @@ async function riotJson(url, riotApiKey) {
     response = await fetch(url, {
       headers: {
         "X-Riot-Token": riotApiKey,
-        "User-Agent": "LoL-XP-Tracker-Private/0.7"
+        "User-Agent": "LoL-XP-Tracker-Private/0.8"
       }
     });
   } catch {
@@ -192,12 +114,19 @@ async function accountPuuid(region, gameName, tagLine, riotApiKey) {
   return account.puuid;
 }
 
-async function handleMatchRequest(request, env, explicitMatchId = null) {
+function inBackground(context, promise) {
+  const safePromise = promise.catch(() => undefined);
+  if (context && typeof context.waitUntil === "function") {
+    context.waitUntil(safePromise);
+  }
+}
+
+async function handleMatchRequest(request, env, context, explicitMatchId = null) {
   const url = new URL(request.url);
   const gameName = requiredQuery(url, "game_name", 64);
   const tagLine = requiredQuery(url, "tag_line", 16);
   const { platform, region } = platformRoute(requiredQuery(url, "platform", 8));
-  await authorizeAccount(request.headers.get("authorization"), env.ACCESS_RULES, gameName, tagLine);
+  const access = await authorizeRequest(request, env, gameName, tagLine, context);
 
   const puuid = await accountPuuid(region, gameName, tagLine, env.RIOT_API_KEY);
   let matchId = explicitMatchId;
@@ -219,29 +148,108 @@ async function handleMatchRequest(request, env, explicitMatchId = null) {
     `https://${region}.api.riotgames.com/lol/match/v5/matches/${encodeURIComponent(matchId)}`,
     env.RIOT_API_KEY
   );
-  return buildMatchData(match, puuid);
+  const result = buildMatchData(match, puuid);
+  if (access.friendId) {
+    inBackground(
+      context,
+      recordActivity(env, {
+        friendId: access.friendId,
+        deviceId: access.deviceId,
+        eventType: "request_ok",
+        requestedAccount: access.requestedAccount,
+        endpoint: url.pathname,
+        country: access.country,
+        networkHash: access.networkHash,
+        result: "allowed",
+        details: result.match_id
+      })
+    );
+  }
+  return result;
+}
+
+async function handleAdminRequest(request, env) {
+  await requireAdmin(request, env);
+  const url = new URL(request.url);
+  const origin = url.origin;
+
+  if (request.method === "GET" && url.pathname === "/v1/admin/overview") {
+    return jsonResponse(await adminOverview(env));
+  }
+  if (request.method === "POST" && url.pathname === "/v1/admin/friends") {
+    return jsonResponse(await createFriend(env, await jsonBody(request), origin), 201);
+  }
+  const rotateRoute = url.pathname.match(/^\/v1\/admin\/friends\/([^/]+)\/rotate$/);
+  if (request.method === "POST" && rotateRoute) {
+    return jsonResponse(await rotateFriendCode(env, rotateRoute[1], origin));
+  }
+  const accountRoute = url.pathname.match(
+    /^\/v1\/admin\/friends\/([^/]+)\/accounts(?:\/([^/]+))?$/
+  );
+  if (request.method === "POST" && accountRoute && !accountRoute[2]) {
+    return jsonResponse(
+      await addFriendAccount(env, accountRoute[1], await jsonBody(request)),
+      201
+    );
+  }
+  if (request.method === "DELETE" && accountRoute?.[2]) {
+    await deleteFriendAccount(env, accountRoute[1], accountRoute[2]);
+    return jsonResponse({ status: "ok" });
+  }
+  const friendRoute = url.pathname.match(/^\/v1\/admin\/friends\/([^/]+)$/);
+  if ((request.method === "PATCH" || request.method === "DELETE") && friendRoute) {
+    const body = request.method === "DELETE" ? { enabled: false } : await jsonBody(request);
+    return jsonResponse(await updateFriend(env, friendRoute[1], body));
+  }
+  const deviceRoute = url.pathname.match(/^\/v1\/admin\/devices\/([^/]+)$/);
+  if (request.method === "PATCH" && deviceRoute) {
+    return jsonResponse(await updateDevice(env, deviceRoute[1], await jsonBody(request)));
+  }
+  if (request.method === "DELETE" && deviceRoute) {
+    await deleteDevice(env, deviceRoute[1]);
+    return jsonResponse({ status: "ok" });
+  }
+  throw new ProxyError(404, "route_not_found", "Nie znaleziono endpointu panelu.");
+}
+
+async function routeRequest(request, env, context) {
+  const url = new URL(request.url);
+  if (request.method === "GET" && (url.pathname === "/admin" || url.pathname === "/admin/")) {
+    return adminPageResponse();
+  }
+  if (url.pathname.startsWith("/v1/admin/")) {
+    return handleAdminRequest(request, env);
+  }
+  if (request.method !== "GET") {
+    throw new ProxyError(405, "method_not_allowed", "Ta metoda nie jest dozwolona.");
+  }
+  if (url.pathname === "/health") {
+    return jsonResponse({
+      status: "ok",
+      version: env.SERVICE_VERSION || "unknown",
+      friend_profiles: Boolean(env.ACCESS_DB)
+    });
+  }
+  if (url.pathname === "/v1/latest-match") {
+    return jsonResponse(await handleMatchRequest(request, env, context));
+  }
+  const matchRoute = url.pathname.match(/^\/v1\/matches\/([^/]+)$/);
+  if (matchRoute) {
+    let matchId;
+    try {
+      matchId = decodeURIComponent(matchRoute[1]);
+    } catch {
+      throw new ProxyError(400, "invalid_match_id", "Nieprawidłowy identyfikator meczu.");
+    }
+    return jsonResponse(await handleMatchRequest(request, env, context, matchId));
+  }
+  throw new ProxyError(404, "route_not_found", "Nie znaleziono endpointu.");
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, context) {
     try {
-      const url = new URL(request.url);
-      if (request.method !== "GET") {
-        throw new ProxyError(405, "method_not_allowed", "Dozwolone są wyłącznie zapytania GET.");
-      }
-      if (url.pathname === "/health") {
-        return jsonResponse({ status: "ok", version: env.SERVICE_VERSION || "unknown" });
-      }
-      if (url.pathname === "/v1/latest-match") {
-        return jsonResponse(await handleMatchRequest(request, env));
-      }
-      const matchRoute = url.pathname.match(/^\/v1\/matches\/([^/]+)$/);
-      if (matchRoute) {
-        return jsonResponse(
-          await handleMatchRequest(request, env, decodeURIComponent(matchRoute[1]))
-        );
-      }
-      throw new ProxyError(404, "route_not_found", "Nie znaleziono endpointu.");
+      return await routeRequest(request, env, context);
     } catch (error) {
       const known = error instanceof ProxyError;
       const status = known ? error.status : 500;
@@ -257,5 +265,9 @@ export default {
         headers
       );
     }
+  },
+
+  async scheduled(_controller, env, context) {
+    context.waitUntil(cleanupLogs(env));
   }
 };

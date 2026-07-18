@@ -21,6 +21,7 @@ dist-release/
 backend/.dev.vars
 backend/.wrangler/
 backend/node_modules/
+backend/wrangler.deploy.json
 
 .coverage
 .pytest_cache/
