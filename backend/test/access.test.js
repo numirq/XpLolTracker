@@ -293,5 +293,8 @@ test("admin page has strict browser headers and valid inline JavaScript", async 
   assert.match(script, /const formElement=event\.currentTarget/);
   assert.match(html, /Pierwsze konto przypisze się automatycznie/);
   assert.match(script, /first_account_claimed:'Przypisano pierwsze konto'/);
+  assert.match(html, /Urządzenia tego znajomego/);
+  assert.match(script, /Ostatnie konto:/);
+  assert.doesNotMatch(html, /id="devices"/);
   assert.doesNotMatch(script, /await api\([^;]+\);event\.currentTarget\.reset/);
 });
