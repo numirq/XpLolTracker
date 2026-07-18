@@ -1,6 +1,6 @@
 {
-  "version": "0.7.0",
-  "download_url": "https://github.com/numirq/XpLolTracker/releases/download/v0.7.0/LoL-XP-Tracker-v0.7.0.zip",
-  "sha256": "b07d2ffcf46d32b9bce9f8016e436c2f2e938077fb65f3ee2df64531933bb4b3",
-  "notes": "Wersja 0.7.0 opublikowana automatycznie przez GitHub Actions."
+  "version": "0.7.1",
+  "download_url": "https://github.com/numirq/XpLolTracker/releases/download/v0.7.1/LoL-XP-Tracker-v0.7.1.zip",
+  "sha256": "234dbb68cf60708c9bc53b1e6a5f419b984134fa31a1acacd3dbcf690c852363",
+  "notes": "Wersja 0.7.1 opublikowana automatycznie przez GitHub Actions."
 }
