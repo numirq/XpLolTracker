@@ -17,6 +17,7 @@ import {
   deleteFriend,
   deleteFriendAccount,
   recordActivity,
+  reviewFriendAccount,
   requireAdmin,
   rotateFriendCode,
   updateDevice,
@@ -39,7 +40,7 @@ async function riotJson(url, riotApiKey) {
     response = await fetch(url, {
       headers: {
         "X-Riot-Token": riotApiKey,
-        "User-Agent": "LoL-XP-Tracker-Private/0.9"
+        "User-Agent": "LoL-XP-Tracker-Private/0.10"
       }
     });
   } catch {
@@ -197,6 +198,9 @@ async function handleAdminRequest(request, env) {
     await deleteFriendAccount(env, accountRoute[1], accountRoute[2]);
     return jsonResponse({ status: "ok" });
   }
+  if (request.method === "PATCH" && accountRoute?.[2]) {
+    return jsonResponse(await reviewFriendAccount(env, accountRoute[1], accountRoute[2]));
+  }
   const friendRoute = url.pathname.match(/^\/v1\/admin\/friends\/([^/]+)$/);
   if (request.method === "PATCH" && friendRoute) {
     return jsonResponse(await updateFriend(env, friendRoute[1], await jsonBody(request)));
@@ -231,7 +235,9 @@ async function routeRequest(request, env, context) {
     return jsonResponse({
       status: "ok",
       version: env.SERVICE_VERSION || "unknown",
-      friend_profiles: Boolean(env.ACCESS_DB)
+      friend_profiles: Boolean(env.ACCESS_DB),
+      riot_api_configured: Boolean(env.RIOT_API_KEY),
+      admin_configured: Boolean(env.ADMIN_TOKEN)
     });
   }
   if (url.pathname === "/v1/latest-match") {

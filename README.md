@@ -57,9 +57,9 @@ Przy pierwszym uruchomieniu dodaj konto ręcznie albo użyj automatycznego wykry
 
 ## Prywatny backend dla znajomych
 
-Wersja 0.9 obsługuje prywatny Cloudflare Worker z folderu [`backend`](backend). Klucz Riot pozostaje sekretem Workera. Właściciel tworzy w panelu profil znajomego, przypisuje do niego dowolną liczbę Riot ID i wysyła jedno zaproszenie. Kod profilu nie wygasa — działa do ręcznego wyłączenia, zmiany lub całkowitego usunięcia profilu przez właściciela.
+Prywatny Cloudflare Worker z folderu [`backend`](backend) przechowuje klucz Riot jako sekret. Właściciel tworzy profil znajomego i wysyła jedno bezterminowe zaproszenie. Każde użyte później Riot ID zostaje automatycznie dopisane do właściwego profilu i działa od razu, a właściciel otrzymuje alert do sprawdzenia.
 
-Nowa instalacja aplikacji nie jest blokowana. Serwer dopuszcza żądanie, oznacza urządzenie czerwonym alertem i zapisuje zdarzenie w 30-dniowej historii aktywności.
+Nowe konto i nowa instalacja aplikacji nie są blokowane. Serwer dopuszcza żądanie, oznacza je czerwonym alertem i zapisuje zdarzenie w 30-dniowej historii aktywności. Panel 2.0 rozdziela pulpit, znajomych, konta, urządzenia, aktywność i stan systemu.
 
 Instrukcja backendu i generator kodów znajdują się w [`backend/README.md`](backend/README.md).
 
