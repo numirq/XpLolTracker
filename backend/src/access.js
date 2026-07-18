@@ -478,6 +478,21 @@ export async function updateFriend(env, friendId, body) {
   return { id: friendId, name, enabled };
 }
 
+export async function deleteFriend(env, friendId) {
+  const database = requireDatabase(env);
+  const existing = await database
+    .prepare("SELECT id FROM friends WHERE id = ?")
+    .bind(friendId)
+    .first();
+  if (!existing) {
+    throw new ProxyError(404, "friend_not_found", "Nie znaleziono znajomego.");
+  }
+  await database.batch([
+    database.prepare("DELETE FROM activity_logs WHERE friend_id = ?").bind(friendId),
+    database.prepare("DELETE FROM friends WHERE id = ?").bind(friendId)
+  ]);
+}
+
 export async function rotateFriendCode(env, friendId, serverUrl) {
   const database = requireDatabase(env);
   const existing = await database.prepare("SELECT id FROM friends WHERE id = ?").bind(friendId).first();

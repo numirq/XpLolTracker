@@ -7,6 +7,7 @@ import {
   adminOverview,
   authorizeRequest,
   createFriend,
+  deleteFriend,
   rotateFriendCode
 } from "../src/access.js";
 import { adminPageResponse } from "../src/admin_page.js";
@@ -240,6 +241,47 @@ test("raw friend tokens are never stored in D1", async () => {
   assert.equal(JSON.stringify(stored).includes(created.code), false);
 });
 
+test("deleting a friend removes their accounts, devices and activity", async () => {
+  const database = new TestD1();
+  const env = {
+    ACCESS_DB: database,
+    ACCESS_RULES: "{}",
+    ADMIN_TOKEN: "admin-secret-with-32-or-more-characters"
+  };
+  const created = await createFriend(
+    env,
+    { name: "Do usunięcia", game_name: "Razorblade", tag_line: "Kiss" },
+    "https://tracker.example"
+  );
+  const workerContext = context();
+  await authorizeRequest(
+    matchRequest(created.code, "installation-to-delete-123"),
+    env,
+    "Razorblade",
+    "Kiss",
+    workerContext
+  );
+  await Promise.all(workerContext.pending);
+  assert.equal((await adminOverview(env)).devices.length, 1);
+
+  await deleteFriend(env, created.friend.id);
+  const overview = await adminOverview(env);
+  assert.equal(overview.friends.length, 0);
+  assert.equal(overview.accounts.length, 0);
+  assert.equal(overview.devices.length, 0);
+  assert.equal(overview.activity.length, 0);
+  await assert.rejects(
+    authorizeRequest(
+      matchRequest(created.code, "installation-to-delete-123"),
+      env,
+      "Razorblade",
+      "Kiss",
+      context()
+    ),
+    (error) => error.status === 401
+  );
+});
+
 test("admin HTTP routes require the owner token and create profiles", async () => {
   const database = new TestD1();
   const env = {
@@ -295,6 +337,8 @@ test("admin page has strict browser headers and valid inline JavaScript", async 
   assert.match(script, /first_account_claimed:'Przypisano pierwsze konto'/);
   assert.match(html, /Urządzenia tego znajomego/);
   assert.match(script, /Ostatnie konto:/);
+  assert.match(script, /Usuń znajomego/);
+  assert.match(script, /method:'DELETE'/);
   assert.doesNotMatch(html, /id="devices"/);
   assert.doesNotMatch(script, /await api\([^;]+\);event\.currentTarget\.reset/);
 });

@@ -14,6 +14,7 @@ import {
   cleanupLogs,
   createFriend,
   deleteDevice,
+  deleteFriend,
   deleteFriendAccount,
   recordActivity,
   requireAdmin,
@@ -197,9 +198,12 @@ async function handleAdminRequest(request, env) {
     return jsonResponse({ status: "ok" });
   }
   const friendRoute = url.pathname.match(/^\/v1\/admin\/friends\/([^/]+)$/);
-  if ((request.method === "PATCH" || request.method === "DELETE") && friendRoute) {
-    const body = request.method === "DELETE" ? { enabled: false } : await jsonBody(request);
-    return jsonResponse(await updateFriend(env, friendRoute[1], body));
+  if (request.method === "PATCH" && friendRoute) {
+    return jsonResponse(await updateFriend(env, friendRoute[1], await jsonBody(request)));
+  }
+  if (request.method === "DELETE" && friendRoute) {
+    await deleteFriend(env, friendRoute[1]);
+    return jsonResponse({ status: "ok" });
   }
   const deviceRoute = url.pathname.match(/^\/v1\/admin\/devices\/([^/]+)$/);
   if (request.method === "PATCH" && deviceRoute) {
