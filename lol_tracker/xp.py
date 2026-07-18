@@ -11,6 +11,11 @@ LEVEL_XP_REQUIREMENTS = {
     28: 2688, 29: 2688,
 }
 
+# Riot exposes the exact size of the current XP bar through the local client,
+# but not every future bar.  For goals above level 30 we keep the estimate
+# useful by repeating the current post-30 bar (or the last known pre-30 bar).
+POST_30_FALLBACK_XP = LEVEL_XP_REQUIREMENTS[29]
+
 
 def calculate_xp_gain(
     before_level: int,
@@ -50,15 +55,36 @@ def xp_to_level(
     target_level: int,
     current_required: int = 0,
 ) -> int:
-    """Return account XP remaining to a target on the supported road to level 30."""
-    target_level = max(1, min(30, int(target_level)))
+    """Return XP remaining to any future target level.
+
+    Values through level 30 use the known level table.  Later levels are an
+    estimate based on the current post-30 XP bar, refreshed whenever the
+    League client is read.
+    """
+    target_level = max(1, int(target_level))
     if current_level >= target_level:
         return 0
     required_now = current_required or LEVEL_XP_REQUIREMENTS.get(current_level, 0)
     remaining = max(0, required_now - current_xp)
-    for level in range(current_level + 1, target_level):
+    known_stop = min(target_level, 30)
+    for level in range(current_level + 1, known_stop):
         remaining += LEVEL_XP_REQUIREMENTS.get(level, 0)
+
+    first_post_30_bar = max(current_level + 1, 30)
+    post_30_bars = max(0, target_level - first_post_30_bar)
+    if post_30_bars:
+        post_30_required = (
+            current_required
+            if current_level >= 30 and current_required > 0
+            else POST_30_FALLBACK_XP
+        )
+        remaining += post_30_bars * post_30_required
     return remaining
+
+
+def goal_estimate_is_approximate(target_level: int) -> bool:
+    """Whether a target crosses bars Riot does not expose in advance."""
+    return int(target_level) > 30
 
 
 def games_to_level(

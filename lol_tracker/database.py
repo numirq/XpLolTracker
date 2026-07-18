@@ -167,8 +167,8 @@ class Database:
 
     def update_account_goal(self, account_id: int, goal_level: int) -> None:
         goal_level = int(goal_level)
-        if goal_level < 2 or goal_level > 30:
-            raise ValueError("Cel musi mieścić się między poziomem 2 i 30.")
+        if goal_level < 2:
+            raise ValueError("Cel musi wynosić co najmniej poziom 2.")
         with self.connect() as connection:
             connection.execute(
                 "UPDATE accounts SET goal_level = ?, updated_at = ? WHERE id = ?",

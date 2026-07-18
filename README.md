@@ -1,6 +1,6 @@
 # LoL XP Tracker
 
-Wersja 0.9.0
+Wersja 0.9.1
 
 Desktopowy tracker poziomu konta League of Legends dla Windows. Obsługuje wiele kont i przechowuje ich historie osobno.
 
@@ -16,7 +16,7 @@ Desktopowy tracker poziomu konta League of Legends dla Windows. Obsługuje wiele
 - automatycznie monitoruje klienta i zapisuje wykryty postęp;
 - formularz gry dopasowuje się do mniejszych ekranów i ma przewijane pola;
 - pokazuje dzienne i bieżące podsumowanie sesji;
-- oblicza pozostałe XP oraz szacowaną liczbę gier do poziomu 30;
+- oblicza pozostałe XP oraz szacowaną liczbę gier do dowolnie wybranego poziomu;
 - zestawia statystyki osobno dla każdego bohatera;
 - pokazuje powiadomienie po automatycznym zapisaniu meczu;
 - ostrzega, gdy zapisany klucz API Riot wygasł;
@@ -39,7 +39,7 @@ Desktopowy tracker poziomu konta League of Legends dla Windows. Obsługuje wiele
 - przyjmuje zaproszenie do prywatnego serwera jednym wklejeniem;
 - rejestruje nowe instalacje aplikacji bez blokowania dostępu i pokazuje alert w panelu właściciela;
 - prowadzi oszczędny, 30-dniowy dziennik aktywności kodów bez zapisywania surowych adresów IP.
-- pozwala ustawić osobny cel poziomu dla każdego konta i wylicza pozostałe XP oraz gry;
+- pozwala ustawić dowolny przyszły cel poziomu osobno dla każdego konta; powyżej poziomu 30 wyliczenie XP jest wyraźnie oznaczone jako szacunkowe;
 - pobiera i lokalnie buforuje oficjalne portrety bohaterów z Riot Data Dragon;
 - pokazuje czytelny stan klienta: lobby, kolejkę, wybór bohatera, trwający i zakończony mecz;
 - wysyła opcjonalne powiadomienia Windows po zapisaniu meczu oraz awansie;

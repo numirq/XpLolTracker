@@ -50,6 +50,13 @@ class XpTests(unittest.TestCase):
         self.assertEqual(games_to_level(24, 1601, 2304, 26, 200), 16)
         self.assertEqual(xp_to_level(26, 0, 25, 2496), 0)
 
+    def test_goal_above_level_30_is_supported(self):
+        self.assertEqual(xp_to_level(29, 1000, 31, 2688), 4376)
+        self.assertEqual(games_to_level(29, 1000, 2688, 31, 200), 22)
+
+    def test_large_goal_is_calculated_without_level_30_clamp(self):
+        self.assertGreater(xp_to_level(24, 1601, 100, 2304), 100_000)
+
 
 class DatabaseTests(unittest.TestCase):
     def setUp(self):
@@ -74,6 +81,10 @@ class DatabaseTests(unittest.TestCase):
         self.db.update_account_goal(self.account_id, 27)
         self.assertEqual(self.db.get_account(self.account_id)["goal_level"], 27)
         self.assertEqual(self.db.get_account(other)["goal_level"], 30)
+
+    def test_level_goal_can_be_above_30(self):
+        self.db.update_account_goal(self.account_id, 100)
+        self.assertEqual(self.db.get_account(self.account_id)["goal_level"], 100)
 
     def test_old_database_receives_default_level_goal(self):
         legacy_path = Path(self.temp.name) / "legacy.db"
@@ -245,7 +256,7 @@ class RiotParserTests(unittest.TestCase):
         request = opener.call_args.args[0]
         self.assertEqual(request.headers["Authorization"], "Bearer friend-token-with-more-than-24-characters")
         self.assertEqual(request.headers["X-client-instance"], "local-installation-identifier-123")
-        self.assertEqual(request.headers["X-tracker-version"], "0.9.0")
+        self.assertEqual(request.headers["X-tracker-version"], "0.9.1")
         self.assertIn("game_name=Test+Player", request.full_url)
         self.assertEqual(parsed["queue_name"], "Ranked Solo/Duo")
         self.assertEqual(parsed["source"], "private_backend")

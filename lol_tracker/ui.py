@@ -38,6 +38,7 @@ from .updater import (
 from .xp import (
     calculate_xp_gain,
     games_to_level,
+    goal_estimate_is_approximate,
     progress_percent,
     xp_to_level,
 )
@@ -252,7 +253,7 @@ class GoalDialog(tk.Toplevel):
         self.account = account
         self.title("Cel poziomu")
         self.configure(bg=COLORS["bg"])
-        self.geometry("470x280")
+        self.geometry("470x305")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -267,14 +268,15 @@ class GoalDialog(tk.Toplevel):
             box,
             text=(
                 f"Aktualnie: poziom {account['current_level']}. "
-                "Tracker obliczy pozostałe XP i przewidywaną liczbę gier."
+                "Wpisz dowolny wyższy poziom, np. 30, 50, 100 lub 500. "
+                "Dla celów powyżej 30 wynik XP jest szacunkowy."
             ),
             bg=COLORS["card"], fg=COLORS["muted"], font=("Segoe UI", 9),
             wraplength=390, justify="left",
         ).pack(anchor="w", padx=18, pady=(0, 12))
         self.goal = tk.StringVar(value=str(account["goal_level"] or 30))
         tk.Spinbox(
-            box, from_=max(2, int(account["current_level"]) + 1), to=30,
+            box, from_=max(2, int(account["current_level"]) + 1), to=1_000_000,
             textvariable=self.goal, bg=COLORS["input"], fg=COLORS["text"],
             buttonbackground=COLORS["card_alt"], insertbackground=COLORS["text"],
             relief="flat", font=("Segoe UI", 11),
@@ -291,10 +293,8 @@ class GoalDialog(tk.Toplevel):
         try:
             goal = int(self.goal.get())
             current = int(self.account["current_level"])
-            if current >= 30:
-                raise ValueError("Poziom 30 został już osiągnięty.")
-            if goal <= current or goal > 30:
-                raise ValueError(f"Wybierz poziom od {current + 1} do 30.")
+            if goal <= current:
+                raise ValueError(f"Wpisz poziom wyższy niż {current}.")
             self.parent.db.update_account_goal(int(self.account["id"]), goal)
             self.destroy()
             self.parent.refresh_all()
@@ -935,9 +935,10 @@ class SessionDialog(tk.Toplevel):
             font=("Segoe UI Semibold", 8),
         ).pack(anchor="w", padx=18, pady=(14, 3))
         estimate_text = f"około {estimated_games} gier" if estimated_games is not None else "zagraj więcej gier, aby obliczyć"
+        xp_prefix = "Szacunkowo pozostało" if goal_estimate_is_approximate(goal_level) else "Pozostało"
         tk.Label(
             road,
-            text=f"Pozostało {remaining:,} XP  •  {estimate_text}".replace(",", " "),
+            text=f"{xp_prefix} {remaining:,} XP  •  {estimate_text}".replace(",", " "),
             bg=COLORS["card"], fg=COLORS["gold"], font=("Segoe UI Semibold", 15),
         ).pack(anchor="w", padx=18, pady=(0, 14))
 
@@ -1691,8 +1692,9 @@ class TrackerApp(tk.Tk):
         else:
             remaining_text = f"{remaining_goal:,}".replace(",", " ")
             games_text = f" • około {estimate} gier" if estimate is not None else ""
+            prefix = "szacunkowo pozostało" if goal_estimate_is_approximate(goal_level) else "pozostało"
             self.goal_label.configure(
-                text=f"Cel: poziom {goal_level} • pozostało {remaining_text} XP{games_text}",
+                text=f"Cel: poziom {goal_level} • {prefix} {remaining_text} XP{games_text}",
                 fg=COLORS["muted"],
             )
         self.stat_labels["games"].configure(text=str(stats["games"]))
@@ -1786,13 +1788,6 @@ class TrackerApp(tk.Tk):
         account = self.current_account()
         if not account:
             messagebox.showinfo("Brak konta", "Najpierw dodaj konto.", parent=self)
-            return
-        if int(account["current_level"]) >= 30:
-            messagebox.showinfo(
-                "Cel osiągnięty",
-                "To konto osiągnęło już poziom 30 — cel trackera został zrealizowany.",
-                parent=self,
-            )
             return
         GoalDialog(self, account)
 
