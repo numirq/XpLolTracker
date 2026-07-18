@@ -477,8 +477,9 @@ class ApiSettingsDialog(tk.Toplevel):
     def __init__(self, parent: "TrackerApp"):
         super().__init__(parent)
         self.parent = parent
-        self.title("Ustawienia API Riot")
+        self.title("Połączenie z danymi meczów")
         self.configure(bg=COLORS["bg"])
+        self.geometry("650x610")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -486,31 +487,88 @@ class ApiSettingsDialog(tk.Toplevel):
         box = Card(self)
         box.pack(padx=22, pady=22, fill="both", expand=True)
         tk.Label(
-            box, text="Klucz API Riot", bg=COLORS["card"], fg=COLORS["text"], font=("Segoe UI Semibold", 16)
+            box, text="Prywatny serwer trackera", bg=COLORS["card"], fg=COLORS["text"],
+            font=("Segoe UI Semibold", 16)
         ).pack(anchor="w", padx=18, pady=(18, 4))
         tk.Label(
             box,
-            text="Klucz developerski wygasa zwykle po 24 godzinach. Jest zapisany tylko lokalnie na tym komputerze.",
-            bg=COLORS["card"], fg=COLORS["muted"], font=("Segoe UI", 9), wraplength=440, justify="left"
-        ).pack(anchor="w", padx=18, pady=(0, 12))
-        self.value = tk.StringVar(value=parent.db.get_setting("riot_api_key"))
-        entry = tk.Entry(
-            box, textvariable=self.value, show="•", width=58, bg=COLORS["input"], fg=COLORS["text"],
+            text="Znajomi wpisują adres serwera i swój kod dostępu tylko raz. Klucz Riot pozostaje na serwerze i nigdy nie trafia do aplikacji.",
+            bg=COLORS["card"], fg=COLORS["muted"], font=("Segoe UI", 9),
+            wraplength=570, justify="left"
+        ).pack(anchor="w", padx=18, pady=(0, 14))
+
+        tk.Label(
+            box, text="Adres serwera HTTPS", bg=COLORS["card"], fg=COLORS["muted"],
+            font=("Segoe UI Semibold", 8)
+        ).pack(anchor="w", padx=18)
+        self.backend_url = tk.StringVar(value=parent.db.get_setting("backend_url"))
+        backend_entry = tk.Entry(
+            box, textvariable=self.backend_url, bg=COLORS["input"], fg=COLORS["text"],
             insertbackground=COLORS["text"], relief="flat", font=("Consolas", 9)
         )
-        entry.pack(fill="x", padx=18, pady=6, ipady=8)
-        entry.focus_set()
+        backend_entry.pack(fill="x", padx=18, pady=(5, 12), ipady=8)
+
+        tk.Label(
+            box, text="Twój kod dostępu", bg=COLORS["card"], fg=COLORS["muted"],
+            font=("Segoe UI Semibold", 8)
+        ).pack(anchor="w", padx=18)
+        self.access_token = tk.StringVar(value=parent.db.get_setting("backend_access_token"))
+        token_entry = tk.Entry(
+            box, textvariable=self.access_token, show="•", bg=COLORS["input"], fg=COLORS["text"],
+            insertbackground=COLORS["text"], relief="flat", font=("Consolas", 9)
+        )
+        token_entry.pack(fill="x", padx=18, pady=(5, 16), ipady=8)
+
+        separator = tk.Frame(box, bg=COLORS["line"], height=1)
+        separator.pack(fill="x", padx=18, pady=(2, 14))
+        tk.Label(
+            box, text="TRYB DEWELOPERSKI — OPCJONALNIE", bg=COLORS["card"], fg=COLORS["muted"],
+            font=("Segoe UI Semibold", 8)
+        ).pack(anchor="w", padx=18)
+        tk.Label(
+            box,
+            text="Lokalny klucz Development jest używany tylko wtedy, gdy prywatny serwer nie został skonfigurowany.",
+            bg=COLORS["card"], fg=COLORS["muted"], font=("Segoe UI", 9),
+            wraplength=570, justify="left"
+        ).pack(anchor="w", padx=18, pady=(4, 7))
+        self.local_key = tk.StringVar(value=parent.db.get_setting("riot_api_key"))
+        local_key_entry = tk.Entry(
+            box, textvariable=self.local_key, show="•", bg=COLORS["input"], fg=COLORS["text"],
+            insertbackground=COLORS["text"], relief="flat", font=("Consolas", 9)
+        )
+        local_key_entry.pack(fill="x", padx=18, pady=(0, 8), ipady=8)
+        (backend_entry if not self.backend_url.get() else token_entry).focus_set()
+
         actions = tk.Frame(box, bg=COLORS["card"])
-        actions.pack(fill="x", padx=18, pady=18)
+        actions.pack(side="bottom", fill="x", padx=18, pady=18)
         StyledButton(actions, text="Zapisz", command=self.save).pack(side="right")
         StyledButton(actions, text="Anuluj", secondary=True, command=self.destroy).pack(side="right", padx=(0, 8))
 
     def save(self) -> None:
-        self.parent.db.set_setting("riot_api_key", self.value.get().strip())
-        self.parent.db.set_setting("riot_api_state", "unknown" if self.value.get().strip() else "missing")
+        backend_url = self.backend_url.get().strip().rstrip("/")
+        access_token = self.access_token.get().strip()
+        if bool(backend_url) != bool(access_token):
+            messagebox.showerror(
+                "Niepełne ustawienia",
+                "Wpisz jednocześnie adres prywatnego serwera i kod dostępu.",
+                parent=self,
+            )
+            return
+        if backend_url and not backend_url.startswith("https://"):
+            messagebox.showerror(
+                "Nieprawidłowy adres",
+                "Adres prywatnego serwera musi rozpoczynać się od https://",
+                parent=self,
+            )
+            return
+        self.parent.db.set_setting("backend_url", backend_url)
+        self.parent.db.set_setting("backend_access_token", access_token)
+        self.parent.db.set_setting("riot_api_key", self.local_key.get().strip())
+        configured = bool((backend_url and access_token) or self.local_key.get().strip())
+        self.parent.db.set_setting("riot_api_state", "unknown" if configured else "missing")
         self.destroy()
         self.parent.refresh_api_state()
-        self.parent.set_status("Zapisano ustawienia API.", COLORS["green"])
+        self.parent.set_status("Zapisano ustawienia połączenia.", COLORS["green"])
 
 
 class MatchDetailsDialog(tk.Toplevel):
@@ -689,7 +747,7 @@ class AboutDialog(tk.Toplevel):
         sections = [
             (
                 "PRYWATNOŚĆ",
-                "Historia gier, ustawienia oraz profile są przechowywane lokalnie na komputerze użytkownika. Aplikacja nie wysyła bazy danych do własnego serwera.",
+                "Historia gier, ustawienia oraz profile są przechowywane lokalnie na komputerze użytkownika. Prywatny backend otrzymuje wyłącznie Riot ID potrzebne do pobrania wskazanego meczu i nie otrzymuje lokalnej bazy danych.",
             ),
             (
                 "DZIAŁANIE",
@@ -1073,7 +1131,7 @@ class TrackerApp(tk.Tk):
         StyledButton(account_actions, text="Usuń", danger=True, command=self.delete_account).pack(
             side="left", fill="x", expand=True, padx=(4, 0)
         )
-        StyledButton(self.sidebar, text="Ustawienia API", secondary=True, command=self.open_api_settings).pack(
+        StyledButton(self.sidebar, text="Połączenie API", secondary=True, command=self.open_api_settings).pack(
             fill="x", padx=16, pady=4
         )
         StyledButton(
@@ -1288,10 +1346,23 @@ class TrackerApp(tk.Tk):
         self.refresh_api_state()
 
     def refresh_api_state(self) -> None:
-        if not self.db.get_setting("riot_api_key"):
-            text, color = "API: brak klucza", COLORS["muted"]
+        backend_url = self.db.get_setting("backend_url")
+        access_token = self.db.get_setting("backend_access_token")
+        local_key = self.db.get_setting("riot_api_key")
+        state = self.db.get_setting("riot_api_state", "unknown")
+        if bool(backend_url) != bool(access_token):
+            text, color = "SERWER: uzupełnij ustawienia", COLORS["red"]
+        elif backend_url and access_token:
+            states = {
+                "ok": ("SERWER: połączenie działa", COLORS["green"]),
+                "access_error": ("SERWER: sprawdź kod dostępu", COLORS["red"]),
+                "server_key_expired": ("SERWER: właściciel musi zmienić klucz Riot", COLORS["red"]),
+                "backend_unavailable": ("SERWER: chwilowo niedostępny", COLORS["gold"]),
+            }
+            text, color = states.get(state, ("SERWER: skonfigurowany", COLORS["teal"]))
+        elif not local_key:
+            text, color = "API: brak konfiguracji", COLORS["muted"]
         else:
-            state = self.db.get_setting("riot_api_state", "unknown")
             if state == "expired":
                 text, color = "API: klucz wygasł", COLORS["red"]
             elif state == "ok":
@@ -1299,6 +1370,37 @@ class TrackerApp(tk.Tk):
             else:
                 text, color = "API: klucz zapisany", COLORS["gold"]
         self.api_state_label.configure(text=text, fg=color)
+
+    def match_api_configured(self) -> bool:
+        backend_ready = bool(
+            self.db.get_setting("backend_url")
+            and self.db.get_setting("backend_access_token")
+        )
+        return backend_ready or bool(self.db.get_setting("riot_api_key"))
+
+    def match_api_client(self, platform: str) -> RiotApiClient:
+        backend_url = self.db.get_setting("backend_url")
+        access_token = self.db.get_setting("backend_access_token")
+        if backend_url and access_token:
+            return RiotApiClient(
+                "",
+                platform,
+                backend_url=backend_url,
+                access_token=access_token,
+            )
+        return RiotApiClient(self.db.get_setting("riot_api_key"), platform)
+
+    def remember_api_error(self, error: RiotApiError) -> None:
+        if error.code == "access_denied":
+            state = "access_error"
+        elif error.code == "riot_key_expired":
+            state = "server_key_expired" if self.db.get_setting("backend_url") else "expired"
+        elif error.code == "backend_unavailable":
+            state = "backend_unavailable"
+        else:
+            return
+        self.db.set_setting("riot_api_state", state)
+        self.refresh_api_state()
 
     def _refresh_accounts(self) -> None:
         for child in self.accounts_frame.winfo_children():
@@ -1474,14 +1576,13 @@ class TrackerApp(tk.Tk):
                 parent=self,
             )
             return
-        api_key = self.db.get_setting("riot_api_key")
-        if not api_key:
+        if not self.match_api_configured():
             ApiSettingsDialog(self)
             return
         self.set_status("Pobieram pełne szczegóły meczu z Riot…", COLORS["gold"])
 
         def task() -> dict[str, Any]:
-            client = RiotApiClient(api_key, account["platform"])
+            client = self.match_api_client(account["platform"])
             return client.match_by_id(
                 account["game_name"], account["tag_line"], game["match_id"]
             )
@@ -1606,9 +1707,8 @@ class TrackerApp(tk.Tk):
         callback(result)
 
     def _background_error(self, error: Exception, quiet: bool) -> None:
-        if isinstance(error, RiotApiError) and error.status_code in (401, 403):
-            self.db.set_setting("riot_api_state", "expired")
-            self.refresh_api_state()
+        if isinstance(error, RiotApiError):
+            self.remember_api_error(error)
         if not quiet:
             self.busy = False
             self.set_status(str(error), COLORS["red"])
@@ -1618,13 +1718,12 @@ class TrackerApp(tk.Tk):
         account = self.current_account()
         if not account:
             return
-        api_key = self.db.get_setting("riot_api_key")
-        if not api_key:
+        if not self.match_api_configured():
             ApiSettingsDialog(self)
             return
         self.set_status("Pobieram ostatni mecz z API Riot…", COLORS["gold"])
         def task() -> dict[str, Any]:
-            client = RiotApiClient(api_key, account["platform"])
+            client = self.match_api_client(account["platform"])
             return client.latest_match(account["game_name"], account["tag_line"])
         def success(data: dict[str, Any]) -> None:
             self.db.set_setting("riot_api_state", "ok")
@@ -1750,11 +1849,10 @@ class TrackerApp(tk.Tk):
             int(account["current_level"]), int(account["current_xp"]), int(account["xp_required"]),
             int(snapshot["level"]), int(snapshot["xp"])
         )
-        api_key = self.db.get_setting("riot_api_key")
-        if api_key:
+        if self.match_api_configured():
             def task() -> dict[str, Any]:
                 try:
-                    data = RiotApiClient(api_key, account["platform"]).latest_match(
+                    data = self.match_api_client(account["platform"]).latest_match(
                         account["game_name"], account["tag_line"]
                     )
                 except RiotApiError as error:
@@ -1765,6 +1863,7 @@ class TrackerApp(tk.Tk):
                         "source": "auto_lcu",
                         "api_error": str(error),
                         "api_error_code": error.status_code,
+                        "api_error_kind": error.code,
                     }
                 data.update({
                     "level_after": snapshot["level"], "xp_after": snapshot["xp"],
@@ -1774,8 +1873,14 @@ class TrackerApp(tk.Tk):
                     data.update({"notes": "Automatycznie wykryte po grze", "source": "auto"})
                 return data
             def success(data: dict[str, Any]) -> None:
-                if data.get("api_error_code") in (401, 403):
-                    self.db.set_setting("riot_api_state", "expired")
+                if data.get("api_error"):
+                    self.remember_api_error(
+                        RiotApiError(
+                            str(data["api_error"]),
+                            status_code=data.get("api_error_code"),
+                            code=str(data.get("api_error_kind") or "api_error"),
+                        )
+                    )
                 elif not data.get("api_error"):
                     self.db.set_setting("riot_api_state", "ok")
                 self.refresh_api_state()

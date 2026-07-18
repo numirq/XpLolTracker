@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lol-xp-tracker-api",
+  "main": "src/worker.js",
+  "compatibility_date": "2026-07-18",
+  "vars": {
+    "SERVICE_VERSION": "0.7.0"
+  }
+}

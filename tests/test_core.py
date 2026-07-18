@@ -1,10 +1,14 @@
+import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.error import HTTPError
+from unittest.mock import patch
 
 from lol_tracker.database import Database
 from lol_tracker.lcu_client import LcuClient
-from lol_tracker.riot_api import RiotApiClient
+from lol_tracker.riot_api import RiotApiClient, RiotApiError
 from lol_tracker.updater import version_tuple
 from lol_tracker.xp import (
     calculate_xp_gain,
@@ -153,6 +157,79 @@ class RiotParserTests(unittest.TestCase):
         self.assertEqual(parsed["cs"], 160)
         self.assertEqual(parsed["queue_name"], "Ranked Solo/Duo")
         self.assertEqual(parsed["gold"], 12345)
+
+    def test_private_backend_returns_normalized_match(self):
+        payload = {
+            "match_id": "EUW1_123",
+            "played_at": "2026-07-18T18:00:00.000Z",
+            "queue_id": 420,
+            "champion": "Lux",
+            "role": "MIDDLE",
+            "win": True,
+            "kills": 5,
+            "deaths": 2,
+            "assists": 9,
+            "cs": 160,
+            "damage": 21000,
+            "gold": 12345,
+            "vision_score": 18,
+            "champion_level": 17,
+            "duration_seconds": 1800,
+        }
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        client = RiotApiClient(
+            "",
+            "EUW1",
+            backend_url="https://tracker.example.workers.dev",
+            access_token="friend-token-with-more-than-24-characters",
+        )
+        with patch("lol_tracker.riot_api.urlopen", return_value=Response()) as opener:
+            parsed = client.latest_match("Test Player", "EUW")
+
+        request = opener.call_args.args[0]
+        self.assertEqual(request.headers["Authorization"], "Bearer friend-token-with-more-than-24-characters")
+        self.assertIn("game_name=Test+Player", request.full_url)
+        self.assertEqual(parsed["queue_name"], "Ranked Solo/Duo")
+        self.assertEqual(parsed["source"], "private_backend")
+
+    def test_private_backend_reports_access_denied(self):
+        body = io.BytesIO(
+            json.dumps(
+                {"error": {"code": "access_denied", "message": "Kod dostępu jest nieprawidłowy."}}
+            ).encode("utf-8")
+        )
+        error = HTTPError("https://tracker.example.workers.dev", 401, "Unauthorized", {}, body)
+        client = RiotApiClient(
+            "",
+            "EUW1",
+            backend_url="https://tracker.example.workers.dev",
+            access_token="friend-token-with-more-than-24-characters",
+        )
+        with patch("lol_tracker.riot_api.urlopen", side_effect=error):
+            with self.assertRaises(RiotApiError) as raised:
+                client.latest_match("Test Player", "EUW")
+        self.assertEqual(raised.exception.code, "access_denied")
+        self.assertEqual(raised.exception.status_code, 401)
+
+    def test_private_backend_requires_https(self):
+        with self.assertRaises(RiotApiError) as raised:
+            RiotApiClient(
+                "",
+                "EUW1",
+                backend_url="http://tracker.example.test",
+                access_token="friend-token-with-more-than-24-characters",
+            )
+        self.assertEqual(raised.exception.code, "configuration_error")
 
 
 class LcuParserTests(unittest.TestCase):

@@ -1,0 +1,2 @@
+RIOT_API_KEY="RGAPI-your-development-or-personal-key"
+ACCESS_RULES='{"SHA256_OF_FRIEND_TOKEN":["GameName#TagLine"]}'

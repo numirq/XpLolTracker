@@ -18,6 +18,9 @@ dist-release/
 *.sqlite3
 .env
 .env.*
+backend/.dev.vars
+backend/.wrangler/
+backend/node_modules/
 
 .coverage
 .pytest_cache/

@@ -1,6 +1,6 @@
 # LoL XP Tracker
 
-Wersja 0.6.0
+Wersja 0.7.0
 
 Desktopowy tracker poziomu konta League of Legends dla Windows. Obsługuje wiele kont i przechowuje ich historie osobno.
 
@@ -31,6 +31,8 @@ Desktopowy tracker poziomu konta League of Legends dla Windows. Obsługuje wiele
 - zawiera widoczne informacje o prywatności, działaniu oraz niezależności produktu od Riot Games.
 - pokazuje średnie XP, win rate i szacowaną liczbę gier do kolejnego poziomu;
 - przechowuje dane lokalnie w bazie SQLite.
+- może pobierać mecze przez prywatny Cloudflare Worker, dzięki czemu znajomi nie potrzebują własnych kluczy Riot API;
+- używa osobnych, odwoływalnych kodów dostępu ograniczonych do wskazanych Riot ID.
 
 ## Uruchomienie na Windows
 
@@ -42,13 +44,19 @@ Przy pierwszym uruchomieniu `start.bat` automatycznie zainstaluje małe dodatki 
 
 Przy pierwszym uruchomieniu dodaj konto ręcznie albo użyj automatycznego wykrywania uruchomionego klienta League of Legends.
 
-## Automatyczne statystyki meczu
+## Prywatny backend dla znajomych
 
-Do pobierania historii meczów potrzebny jest klucz z Riot Developer Portal (Development albo zatwierdzony Personal API Key):
+Wersja 0.7 obsługuje prywatny Cloudflare Worker z folderu [`backend`](backend). Klucz Riot pozostaje sekretem Workera. Każdy znajomy wpisuje w aplikacji jedynie adres HTTPS i własny kod dostępu, który jest ograniczony do przypisanych Riot ID.
+
+Instrukcja backendu i generator kodów znajdują się w [`backend/README.md`](backend/README.md).
+
+## Lokalny tryb developerski
+
+Do testowania bez prywatnego backendu można nadal użyć klucza z Riot Developer Portal:
 
 1. Wejdź na [Riot Developer Portal](https://developer.riotgames.com/).
 2. Zaloguj się i skopiuj wygenerowany klucz API.
-3. W aplikacji wybierz **Ustawienia API** i wklej klucz.
+3. W aplikacji wybierz **Połączenie API** i wklej klucz w opcjonalnym polu trybu developerskiego.
 
 Klucz Development zwykle wygasa po 24 godzinach. Klucz nie jest dołączony do kodu; wpisana wartość pozostaje wyłącznie w lokalnej bazie aplikacji.
 
@@ -56,8 +64,8 @@ Klucz Development zwykle wygasa po 24 godzinach. Klucz nie jest dołączony do k
 
 Co 15 sekund aplikacja sprawdza wyłącznie lokalny klient League of Legends. Jeśli wykryje wzrost XP na dodanym koncie:
 
-- z aktywnym kluczem API pobierze ostatni mecz i zapisze pełny wpis;
-- bez klucza API zapisze XP oraz utworzy wpis „Do uzupełnienia”, który można otworzyć podwójnym kliknięciem.
+- ze skonfigurowanym prywatnym backendem albo aktywnym kluczem lokalnym pobierze ostatni mecz i zapisze pełny wpis;
+- bez dostępu do danych meczów zapisze XP oraz utworzy wpis „Do uzupełnienia”, który można otworzyć podwójnym kliknięciem.
 
 Program nie klika w kliencie, nie rozpoczyna gier i nie steruje rozgrywką.
 Lokalny odczyt XP zależy od interfejsu klienta Riot, dlatego po większej aktualizacji gry może wymagać poprawki.
