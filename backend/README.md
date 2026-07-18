@@ -1,13 +1,13 @@
 # Prywatny backend LoL XP Tracker
 
-Cloudflare Worker ukrywa klucz Riot API przed aplikacjami desktopowymi. Wersja 0.9 zawiera panel właściciela z bezterminowymi profilami znajomych, wieloma Riot ID, alertami urządzeń, wyszukiwaniem oraz filtrowaniem profili.
+Cloudflare Worker ukrywa klucz Riot API przed aplikacjami desktopowymi. Wersja 0.10 zawiera panel zarządzania 2.0, bezterminowe profile znajomych, automatyczne dopisywanie Riot ID oraz alerty kont i urządzeń.
 
 ## Jak działa dostęp
 
 - jeden znajomy otrzymuje jeden bezterminowy kod;
-- jeżeli profil nie ma jeszcze konta, pierwsze konto użyte z zaproszeniem przypisze się automatycznie;
-- do profilu można dodać dowolną liczbę kont Riot;
-- kolejne konta dodaje właściciel w panelu, więc kod nie przejmie automatycznie dostępu do innego Riot ID;
+- każde konto użyte z prawidłowym kodem zostaje automatycznie przypisane do profilu znajomego;
+- znajomy może korzystać z dowolnej liczby kont Riot bez oczekiwania na zgodę właściciela;
+- nowe konto działa od razu, ale pozostaje czerwonym alertem do oznaczenia jako sprawdzone;
 - kod działa do ręcznego wyłączenia albo zmiany przez właściciela;
 - nowe urządzenie nie jest blokowane — zostaje dopuszczone i oznaczone czerwonym alertem;
 - surowe kody i adresy IP nie są zapisywane;
@@ -45,11 +45,13 @@ Po wdrożeniu otwórz:
 
 Zaloguj się wartością `ADMIN_TOKEN`. W panelu możesz:
 
+- korzystać z osobnych widoków: pulpit, znajomi, konta Riot, urządzenia, aktywność i stan systemu;
 - utworzyć znajomego i skopiować zaproszenie;
-- dodawać oraz usuwać jego konta Riot;
+- przeglądać automatycznie dodane konta Riot i oznaczać je jako sprawdzone;
+- dodawać oraz usuwać konta ręcznie;
 - wyłączyć lub zmienić kod;
 - zobaczyć nowe urządzenia, nazwać je i oznaczyć jako znane;
-- przejrzeć ostatnią aktywność kodów.
+- filtrować ostatnią aktywność kodów i kontrolować stan Workera, D1 oraz konfiguracji.
 
 Aplikacja desktopowa przyjmuje całe zaproszenie w oknie **Połączenie API**. Adres serwera i kod wypełnią się automatycznie.
 

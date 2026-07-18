@@ -261,25 +261,33 @@ export async function authorizeRequest(
           const { platform } = platformRoute(requestedPlatform);
           const accountId = randomId();
           const createdAt = utcNow();
-          const claim = await env.ACCESS_DB.prepare(
-            `INSERT INTO friend_accounts
-              (id, friend_id, game_name, tag_line, normalized_account, platform, created_at)
-             SELECT ?, ?, ?, ?, ?, ?, ?
-             WHERE NOT EXISTS (
-               SELECT 1 FROM friend_accounts WHERE friend_id = ?
-             )`
-          )
-            .bind(
-              accountId,
-              friend.id,
-              gameName,
-              tagLine,
-              requestedAccount,
-              platform,
-              createdAt,
-              friend.id
+          let autoAdded = false;
+          try {
+            const created = await env.ACCESS_DB.prepare(
+              `INSERT INTO friend_accounts
+                (id, friend_id, game_name, tag_line, normalized_account, platform, created_at, reviewed)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 0)`
             )
-            .run();
+              .bind(
+                accountId,
+                friend.id,
+                gameName,
+                tagLine,
+                requestedAccount,
+                platform,
+                createdAt
+              )
+              .run();
+            autoAdded = Boolean(created.meta?.changes);
+          } catch (error) {
+            account = await env.ACCESS_DB.prepare(
+              `SELECT * FROM friend_accounts
+               WHERE friend_id = ? AND normalized_account = ? LIMIT 1`
+            )
+              .bind(friend.id, requestedAccount)
+              .first();
+            if (!account) throw error;
+          }
 
           account = await env.ACCESS_DB.prepare(
             `SELECT * FROM friend_accounts
@@ -288,13 +296,13 @@ export async function authorizeRequest(
             .bind(friend.id, requestedAccount)
             .first();
 
-          if (claim.meta?.changes && account) {
+          if (autoAdded && account) {
             background(
               context,
               recordActivity(env, {
                 friendId: friend.id,
                 deviceId: device.id,
-                eventType: "first_account_claimed",
+                eventType: "account_auto_added",
                 requestedAccount,
                 endpoint: new URL(request.url).pathname,
                 country: cleanCountry(request),
@@ -305,26 +313,7 @@ export async function authorizeRequest(
             );
           }
         }
-        if (!account) {
-          background(
-            context,
-            recordActivity(env, {
-              friendId: friend.id,
-              deviceId: device.id,
-              eventType: "denied_account",
-              requestedAccount,
-              endpoint: new URL(request.url).pathname,
-              country: cleanCountry(request),
-              networkHash: await networkHash(request, env),
-              result: "denied"
-            })
-          );
-          throw new ProxyError(
-            403,
-            "access_denied",
-            "Ten kod nie ma dostępu do wybranego konta Riot."
-          );
-        }
+        if (!account) throw new ProxyError(503, "account_registration_failed", "Nie udało się dopisać konta do profilu znajomego.");
         return {
           source: "friend_profile",
           friendId: friend.id,
@@ -443,8 +432,8 @@ export async function createFriend(env, body, serverUrl) {
       database
         .prepare(
           `INSERT INTO friend_accounts
-            (id, friend_id, game_name, tag_line, normalized_account, platform, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
+            (id, friend_id, game_name, tag_line, normalized_account, platform, created_at, reviewed)
+           VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
         )
         .bind(
           randomId(),
@@ -522,8 +511,8 @@ export async function addFriendAccount(env, friendId, body) {
     await database
       .prepare(
         `INSERT INTO friend_accounts
-          (id, friend_id, game_name, tag_line, normalized_account, platform, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+          (id, friend_id, game_name, tag_line, normalized_account, platform, created_at, reviewed)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
       )
       .bind(
         id,
@@ -549,6 +538,23 @@ export async function deleteFriendAccount(env, friendId, accountId) {
   if (!result.meta?.changes) {
     throw new ProxyError(404, "account_not_found", "Nie znaleziono przypisanego konta.");
   }
+}
+
+export async function reviewFriendAccount(env, friendId, accountId) {
+  const database = requireDatabase(env);
+  const result = await database
+    .prepare("UPDATE friend_accounts SET reviewed = 1 WHERE id = ? AND friend_id = ?")
+    .bind(accountId, friendId)
+    .run();
+  if (!result.meta?.changes) {
+    throw new ProxyError(404, "account_not_found", "Nie znaleziono przypisanego konta.");
+  }
+  await recordActivity(env, {
+    friendId,
+    eventType: "account_reviewed",
+    result: "admin"
+  });
+  return { id: accountId, friend_id: friendId, reviewed: 1 };
 }
 
 export async function updateDevice(env, deviceId, body) {
@@ -598,13 +604,18 @@ export async function adminOverview(env) {
       )
       .all()
   ]);
+  const accounts = rows(accountResult);
   const devices = rows(deviceResult);
+  const accountAlerts = accounts.filter((account) => !account.reviewed).length;
+  const deviceAlerts = devices.filter((device) => !device.trusted).length;
   return {
     friends: rows(friendResult),
-    accounts: rows(accountResult),
+    accounts,
     devices,
     activity: rows(activityResult),
-    alerts: devices.filter((device) => !device.trusted).length,
+    alerts: accountAlerts + deviceAlerts,
+    account_alerts: accountAlerts,
+    device_alerts: deviceAlerts,
     retention_days: LOG_RETENTION_DAYS
   };
 }
