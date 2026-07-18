@@ -126,7 +126,7 @@ async function handleMatchRequest(request, env, context, explicitMatchId = null)
   const gameName = requiredQuery(url, "game_name", 64);
   const tagLine = requiredQuery(url, "tag_line", 16);
   const { platform, region } = platformRoute(requiredQuery(url, "platform", 8));
-  const access = await authorizeRequest(request, env, gameName, tagLine, context);
+  const access = await authorizeRequest(request, env, gameName, tagLine, context, platform);
 
   const puuid = await accountPuuid(region, gameName, tagLine, env.RIOT_API_KEY);
   let matchId = explicitMatchId;
