@@ -244,4 +244,6 @@ test("admin page has strict browser headers and valid inline JavaScript", async 
   const script = html.match(/<script>([\s\S]+)<\/script>/)?.[1];
   assert.ok(script);
   assert.doesNotThrow(() => new Function(script));
+  assert.match(script, /const formElement=event\.currentTarget/);
+  assert.doesNotMatch(script, /await api\([^;]+\);event\.currentTarget\.reset/);
 });
