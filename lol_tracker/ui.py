@@ -1698,7 +1698,15 @@ class TrackerApp(tk.Tk):
                 result = task()
             except Exception as error:  # transported to UI thread
                 if not self._closing:
-                    self.after(0, lambda: self._background_error(error, quiet))
+                    # Exception targets are cleared when an ``except`` block
+                    # ends.  Bind both values now so Tk can safely execute the
+                    # callback after the worker thread has left this block.
+                    self.after(
+                        0,
+                        lambda caught_error=error, is_quiet=quiet: self._background_error(
+                            caught_error, is_quiet
+                        ),
+                    )
             else:
                 if not self._closing:
                     self.after(0, lambda: self._background_success(success, result, quiet))

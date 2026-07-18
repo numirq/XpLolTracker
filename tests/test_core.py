@@ -9,6 +9,7 @@ from unittest.mock import patch
 from lol_tracker.database import Database
 from lol_tracker.lcu_client import LcuClient
 from lol_tracker.riot_api import RiotApiClient, RiotApiError
+from lol_tracker.ui import TrackerApp
 from lol_tracker.updater import version_tuple
 from lol_tracker.xp import (
     calculate_xp_gain,
@@ -252,6 +253,36 @@ class UpdaterTests(unittest.TestCase):
     def test_semantic_version_comparison(self):
         self.assertGreater(version_tuple("0.5.0"), version_tuple("0.4.9"))
         self.assertEqual(version_tuple("v1.2.3"), (1, 2, 3))
+
+
+class BackgroundTaskTests(unittest.TestCase):
+    def test_exception_remains_available_to_delayed_tk_callback(self):
+        callbacks = []
+        received = []
+        app = object.__new__(TrackerApp)
+        app.busy = False
+        app._closing = False
+        app.after = lambda _delay, callback: callbacks.append(callback)
+        app._background_error = lambda error, quiet: received.append((error, quiet))
+
+        class ImmediateThread:
+            def __init__(self, *, target, daemon):
+                self.target = target
+
+            def start(self):
+                self.target()
+
+        def failing_task():
+            raise RuntimeError("network failed")
+
+        with patch("lol_tracker.ui.threading.Thread", ImmediateThread):
+            app._run_background(failing_task, lambda _result: None)
+
+        self.assertEqual(len(callbacks), 1)
+        callbacks[0]()
+        self.assertIsInstance(received[0][0], RuntimeError)
+        self.assertEqual(str(received[0][0]), "network failed")
+        self.assertFalse(received[0][1])
 
 
 if __name__ == "__main__":
