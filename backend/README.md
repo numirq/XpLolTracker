@@ -5,7 +5,9 @@ Cloudflare Worker ukrywa klucz Riot API przed aplikacjami desktopowymi. Wersja 0
 ## Jak działa dostęp
 
 - jeden znajomy otrzymuje jeden bezterminowy kod;
+- jeżeli profil nie ma jeszcze konta, pierwsze konto użyte z zaproszeniem przypisze się automatycznie;
 - do profilu można dodać dowolną liczbę kont Riot;
+- kolejne konta dodaje właściciel w panelu, więc kod nie przejmie automatycznie dostępu do innego Riot ID;
 - kod działa do ręcznego wyłączenia albo zmiany przez właściciela;
 - nowe urządzenie nie jest blokowane — zostaje dopuszczone i oznaczone czerwonym alertem;
 - surowe kody i adresy IP nie są zapisywane;

@@ -126,6 +126,52 @@ test("permanent friend code allows multiple assigned accounts", async () => {
   assert.equal(Object.hasOwn(created.friend, "expires_at"), false);
 });
 
+test("the first used account claims an empty friend profile but a second one does not", async () => {
+  const database = new TestD1();
+  const env = {
+    ACCESS_DB: database,
+    ACCESS_RULES: "{}",
+    ADMIN_TOKEN: "admin-secret-with-32-or-more-characters"
+  };
+  const created = await createFriend(env, { name: "Znajomy" }, "https://tracker.example");
+  const firstContext = context();
+
+  const accepted = await authorizeRequest(
+    matchRequest(created.code, "first-installation-12345"),
+    env,
+    "Razorblade",
+    "Kiss",
+    firstContext,
+    "EUW1"
+  );
+  await Promise.all(firstContext.pending);
+
+  assert.equal(accepted.friendId, created.friend.id);
+  const overview = await adminOverview(env);
+  assert.equal(overview.accounts.length, 1);
+  assert.equal(overview.accounts[0].normalized_account, "razorblade#kiss");
+  assert.equal(overview.accounts[0].platform, "EUW1");
+  assert.equal(
+    overview.activity.some((item) => item.event_type === "first_account_claimed"),
+    true
+  );
+
+  const secondContext = context();
+  await assert.rejects(
+    authorizeRequest(
+      matchRequest(created.code, "first-installation-12345", "Second", "EUW"),
+      env,
+      "Second",
+      "EUW",
+      secondContext,
+      "EUW1"
+    ),
+    (error) => error.status === 403
+  );
+  await Promise.all(secondContext.pending);
+  assert.equal((await adminOverview(env)).accounts.length, 1);
+});
+
 test("a new device is allowed and creates a visible alert instead of a block", async () => {
   const database = new TestD1();
   const env = { ACCESS_DB: database, ACCESS_RULES: "{}", ADMIN_TOKEN: "admin-secret-with-32-or-more-characters" };
@@ -245,5 +291,7 @@ test("admin page has strict browser headers and valid inline JavaScript", async 
   assert.ok(script);
   assert.doesNotThrow(() => new Function(script));
   assert.match(script, /const formElement=event\.currentTarget/);
+  assert.match(html, /Pierwsze konto przypisze się automatycznie/);
+  assert.match(script, /first_account_claimed:'Przypisano pierwsze konto'/);
   assert.doesNotMatch(script, /await api\([^;]+\);event\.currentTarget\.reset/);
 });

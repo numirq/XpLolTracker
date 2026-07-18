@@ -222,7 +222,14 @@ async function authorizeLegacy(tokenHash, rawRules, gameName, tagLine) {
   return true;
 }
 
-export async function authorizeRequest(request, env, gameName, tagLine, context = null) {
+export async function authorizeRequest(
+  request,
+  env,
+  gameName,
+  tagLine,
+  context = null,
+  requestedPlatform = "EUW1"
+) {
   const token = bearerToken(request);
   if (!token) {
     throw new ProxyError(401, "access_denied", "Brak kodu dostępu do prywatnego serwera.");
@@ -244,12 +251,60 @@ export async function authorizeRequest(request, env, gameName, tagLine, context 
           throw new ProxyError(401, "access_revoked", "Ten kod dostępu został wyłączony.");
         }
         const device = await registerDevice(request, env, friend, context);
-        const account = await env.ACCESS_DB.prepare(
+        let account = await env.ACCESS_DB.prepare(
           `SELECT * FROM friend_accounts
            WHERE friend_id = ? AND normalized_account = ? LIMIT 1`
         )
           .bind(friend.id, requestedAccount)
           .first();
+        if (!account) {
+          const { platform } = platformRoute(requestedPlatform);
+          const accountId = randomId();
+          const createdAt = utcNow();
+          const claim = await env.ACCESS_DB.prepare(
+            `INSERT INTO friend_accounts
+              (id, friend_id, game_name, tag_line, normalized_account, platform, created_at)
+             SELECT ?, ?, ?, ?, ?, ?, ?
+             WHERE NOT EXISTS (
+               SELECT 1 FROM friend_accounts WHERE friend_id = ?
+             )`
+          )
+            .bind(
+              accountId,
+              friend.id,
+              gameName,
+              tagLine,
+              requestedAccount,
+              platform,
+              createdAt,
+              friend.id
+            )
+            .run();
+
+          account = await env.ACCESS_DB.prepare(
+            `SELECT * FROM friend_accounts
+             WHERE friend_id = ? AND normalized_account = ? LIMIT 1`
+          )
+            .bind(friend.id, requestedAccount)
+            .first();
+
+          if (claim.meta?.changes && account) {
+            background(
+              context,
+              recordActivity(env, {
+                friendId: friend.id,
+                deviceId: device.id,
+                eventType: "first_account_claimed",
+                requestedAccount,
+                endpoint: new URL(request.url).pathname,
+                country: cleanCountry(request),
+                networkHash: await networkHash(request, env),
+                result: "allowed",
+                details: platform
+              })
+            );
+          }
+        }
         if (!account) {
           background(
             context,
