@@ -2,6 +2,19 @@ name: Deploy private backend
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "backend/src/**"
+      - "backend/migrations/**"
+      - "backend/package.json"
+      - "backend/package-lock.json"
+      - "backend/wrangler.jsonc"
+      - ".github/workflows/deploy-worker.yml"
+
+concurrency:
+  group: deploy-private-backend
+  cancel-in-progress: false
 
 permissions:
   contents: read

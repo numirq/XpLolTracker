@@ -17,7 +17,7 @@ Identyfikator urządzenia oznacza losowy identyfikator instalacji trackera, a ni
 
 ## Wdrożenie przez GitHub Actions
 
-Repozytorium zawiera ręczny workflow **Deploy private backend**. Do GitHub Actions Secrets dodaj:
+Repozytorium zawiera workflow **Deploy private backend**. Po scaleniu zmian backendu do gałęzi `main` testy i wdrożenie uruchamiają się automatycznie. Przycisk ręcznego uruchomienia pozostaje dostępny jako awaryjna możliwość ponowienia wdrożenia. Do GitHub Actions Secrets dodaj:
 
 - `CLOUDFLARE_API_TOKEN` — token wdrożeniowy z uprawnieniami Workers Scripts Edit, D1 Edit oraz odczytem danych konta;
 - `CLOUDFLARE_ACCOUNT_ID` — identyfikator konta Cloudflare.
