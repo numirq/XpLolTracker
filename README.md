@@ -1,6 +1,6 @@
 # LoL XP Tracker
 
-Wersja 0.7.1
+Wersja 0.7.2
 
 Desktopowy tracker poziomu konta League of Legends dla Windows. Obsługuje wiele kont i przechowuje ich historie osobno.
 
@@ -34,6 +34,7 @@ Desktopowy tracker poziomu konta League of Legends dla Windows. Obsługuje wiele
 - może pobierać mecze przez prywatny Cloudflare Worker, dzięki czemu znajomi nie potrzebują własnych kluczy Riot API;
 - używa osobnych, odwoływalnych kodów dostępu ograniczonych do wskazanych Riot ID.
 - ma stały rozmiar głównego okna i zawsze widoczny pasek komunikatów oraz akcji historii.
+- poprawnie pokazuje błędy połączenia odebrane przez zadania działające w tle.
 
 ## Uruchomienie na Windows
 
