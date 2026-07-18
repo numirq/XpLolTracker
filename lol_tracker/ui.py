@@ -1047,7 +1047,7 @@ class TrackerApp(tk.Tk):
 
         self.title("LoL XP Tracker")
         self.geometry("1260x780")
-        self.minsize(1050, 680)
+        self.resizable(False, False)
         self.configure(bg=COLORS["bg"])
         self.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
         self._configure_style()
@@ -1211,6 +1211,18 @@ class TrackerApp(tk.Tk):
             tk.Label(cell, text=title, bg=COLORS["card"], fg=COLORS["muted"], font=("Segoe UI Semibold", 8)).pack(pady=(3, 0))
             self.stat_labels[key] = label
 
+        # Keep feedback and row actions outside the expanding history card.  When
+        # this bar was packed after the table, Windows could clip it completely
+        # on shorter displays, hiding both status messages and edit controls.
+        status_frame = tk.Frame(self.main, bg=COLORS["bg"])
+        status_frame.pack(fill="x", padx=24, pady=(0, 12))
+        self.status = tk.Label(
+            status_frame, text="Gotowe", bg=COLORS["bg"], fg=COLORS["muted"], font=("Segoe UI", 9)
+        )
+        self.status.pack(side="left")
+        StyledButton(status_frame, text="Usuń wpis", secondary=True, command=self.delete_selected_game).pack(side="right", padx=(8, 0))
+        StyledButton(status_frame, text="Edytuj wpis", secondary=True, command=self.edit_selected_game).pack(side="right")
+
         table_card = Card(self.main)
         table_card.pack(fill="both", expand=True, padx=24, pady=(0, 12))
         table_head = tk.Frame(table_card, bg=COLORS["card"])
@@ -1278,15 +1290,6 @@ class TrackerApp(tk.Tk):
         self.tree.configure(yscrollcommand=scrollbar.set)
         self.tree.pack(side="left", fill="both", expand=True, padx=(16, 0), pady=(0, 16))
         scrollbar.pack(side="right", fill="y", padx=(0, 12), pady=(0, 16))
-
-        status_frame = tk.Frame(self.main, bg=COLORS["bg"])
-        status_frame.pack(fill="x", padx=24, pady=(0, 12))
-        self.status = tk.Label(
-            status_frame, text="Gotowe", bg=COLORS["bg"], fg=COLORS["muted"], font=("Segoe UI", 9)
-        )
-        self.status.pack(side="left")
-        StyledButton(status_frame, text="Usuń wpis", secondary=True, command=self.delete_selected_game).pack(side="right", padx=(8, 0))
-        StyledButton(status_frame, text="Edytuj wpis", secondary=True, command=self.edit_selected_game).pack(side="right")
 
     def _close(self) -> None:
         self.exit_app()
