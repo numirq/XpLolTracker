@@ -13,7 +13,7 @@ from typing import Any, Callable
 try:
     import pystray
     from PIL import Image, ImageDraw
-except ImportError:  # The normal window still works without optional tray support.
+except Exception:  # Optional tray backends may also fail on systems without a display.
     pystray = None
     Image = None
     ImageDraw = None
