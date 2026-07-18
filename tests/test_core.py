@@ -1,12 +1,14 @@
 import base64
 import io
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from urllib.error import HTTPError
 from unittest.mock import patch
 
+from lol_tracker.champion_icons import ChampionIconCache
 from lol_tracker.database import Database
 from lol_tracker.lcu_client import LcuClient
 from lol_tracker.riot_api import RiotApiClient, RiotApiError, parse_backend_invitation
@@ -14,9 +16,11 @@ from lol_tracker.ui import TrackerApp
 from lol_tracker.updater import version_tuple
 from lol_tracker.xp import (
     calculate_xp_gain,
+    games_to_level,
     games_to_level_30,
     games_to_next_level,
     progress_percent,
+    xp_to_level,
     xp_to_level_30,
 )
 
@@ -40,6 +44,12 @@ class XpTests(unittest.TestCase):
         self.assertEqual(xp_to_level_30(30, 0, 2688), 0)
         self.assertEqual(games_to_level_30(29, 1000, 2688, 200), 9)
 
+    def test_custom_level_goal(self):
+        self.assertEqual(xp_to_level(24, 1601, 25, 2304), 703)
+        self.assertEqual(xp_to_level(24, 1601, 26, 2304), 3199)
+        self.assertEqual(games_to_level(24, 1601, 2304, 26, 200), 16)
+        self.assertEqual(xp_to_level(26, 0, 25, 2496), 0)
+
 
 class DatabaseTests(unittest.TestCase):
     def setUp(self):
@@ -58,6 +68,39 @@ class DatabaseTests(unittest.TestCase):
         )
         self.assertEqual(len(self.db.list_games(self.account_id)), 1)
         self.assertEqual(len(self.db.list_games(other)), 0)
+
+    def test_level_goal_is_saved_per_account(self):
+        other = self.db.add_account("Goal Two", "EUW", "EUW1", 20, 500, 1968)
+        self.db.update_account_goal(self.account_id, 27)
+        self.assertEqual(self.db.get_account(self.account_id)["goal_level"], 27)
+        self.assertEqual(self.db.get_account(other)["goal_level"], 30)
+
+    def test_old_database_receives_default_level_goal(self):
+        legacy_path = Path(self.temp.name) / "legacy.db"
+        connection = sqlite3.connect(legacy_path)
+        connection.execute(
+            """
+            CREATE TABLE accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_name TEXT NOT NULL,
+                tag_line TEXT NOT NULL,
+                platform TEXT NOT NULL,
+                current_level INTEGER NOT NULL DEFAULT 1,
+                current_xp INTEGER NOT NULL DEFAULT 0,
+                xp_required INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(game_name, tag_line, platform)
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO accounts(game_name,tag_line,platform,current_level,current_xp,xp_required,created_at,updated_at) VALUES('Legacy','EUW','EUW1',24,100,2304,'now','now')"
+        )
+        connection.commit()
+        connection.close()
+        migrated = Database(legacy_path)
+        self.assertEqual(migrated.list_accounts()[0]["goal_level"], 30)
 
     def test_game_updates_progress(self):
         self.db.add_game(
@@ -202,7 +245,7 @@ class RiotParserTests(unittest.TestCase):
         request = opener.call_args.args[0]
         self.assertEqual(request.headers["Authorization"], "Bearer friend-token-with-more-than-24-characters")
         self.assertEqual(request.headers["X-client-instance"], "local-installation-identifier-123")
-        self.assertEqual(request.headers["X-tracker-version"], "0.8.0")
+        self.assertEqual(request.headers["X-tracker-version"], "0.9.0")
         self.assertIn("game_name=Test+Player", request.full_url)
         self.assertEqual(parsed["queue_name"], "Ranked Solo/Duo")
         self.assertEqual(parsed["source"], "private_backend")
@@ -270,11 +313,68 @@ class LcuParserTests(unittest.TestCase):
         self.assertEqual(snapshot["xp"], 1738)
         self.assertEqual(snapshot["xp_required"], 2304)
 
+    def test_live_snapshot_contains_gameflow_phase(self):
+        client = object.__new__(LcuClient)
+        responses = {
+            "/lol-summoner/v1/current-summoner": {
+                "gameName": "Test",
+                "tagLine": "EUW",
+                "summonerLevel": 24,
+                "xpSinceLastLevel": 100,
+                "xpUntilNextLevel": 2304,
+            },
+            "/riotclient/region-locale": {"region": "EUW"},
+            "/lol-gameflow/v1/gameflow-phase": "InProgress",
+        }
+        client._get = lambda path: responses[path]
+        snapshot = client.live_snapshot()
+        self.assertEqual(snapshot["gameflow_phase"], "InProgress")
+        self.assertEqual(snapshot["game_name"], "Test")
+
 
 class UpdaterTests(unittest.TestCase):
     def test_semantic_version_comparison(self):
         self.assertGreater(version_tuple("0.5.0"), version_tuple("0.4.9"))
         self.assertEqual(version_tuple("v1.2.3"), (1, 2, 3))
+
+
+class ChampionIconTests(unittest.TestCase):
+    def test_downloads_and_reuses_official_champion_square(self):
+        png = b"\x89PNG\r\n\x1a\n" + b"x" * 128
+
+        class Response:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self, _limit=-1):
+                return self.payload
+
+        calls = []
+
+        def opener(request, timeout):
+            calls.append((request.full_url, timeout))
+            payload = b'["16.14.1"]' if request.full_url.endswith("versions.json") else png
+            return Response(payload)
+
+        with tempfile.TemporaryDirectory() as directory:
+            cache = ChampionIconCache(directory, opener=opener)
+            first = cache.icon_path("Lux")
+            second = cache.icon_path("Lux")
+            self.assertEqual(first, second)
+            self.assertEqual(first.read_bytes(), png)
+            self.assertEqual(len(calls), 2)
+
+    def test_rejects_unsafe_champion_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache = ChampionIconCache(directory)
+            with self.assertRaises(ValueError):
+                cache.icon_path("../Lux")
 
 
 class BackgroundTaskTests(unittest.TestCase):

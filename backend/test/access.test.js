@@ -81,7 +81,7 @@ function matchRequest(token, instance, gameName = "Razorblade", tagLine = "Kiss"
     headers: {
       authorization: `Bearer ${token}`,
       "x-client-instance": instance,
-      "x-tracker-version": "0.8.0",
+      "x-tracker-version": "0.9.0",
       "cf-ipcountry": "PL"
     }
   });
@@ -288,7 +288,7 @@ test("admin HTTP routes require the owner token and create profiles", async () =
     ACCESS_DB: database,
     ACCESS_RULES: "{}",
     ADMIN_TOKEN: "admin-secret-with-32-or-more-characters",
-    SERVICE_VERSION: "0.8.0"
+    SERVICE_VERSION: "0.9.0"
   };
   const denied = await worker.fetch(
     new Request("https://tracker.example/v1/admin/overview"),
@@ -339,6 +339,9 @@ test("admin page has strict browser headers and valid inline JavaScript", async 
   assert.match(script, /Ostatnie konto:/);
   assert.match(script, /Usuń znajomego/);
   assert.match(script, /method:'DELETE'/);
+  assert.match(html, /id="friend-filter"/);
+  assert.match(html, /Tylko z alertami/);
+  assert.match(script, /Zmień nazwę/);
   assert.doesNotMatch(html, /id="devices"/);
   assert.doesNotMatch(script, /await api\([^;]+\);event\.currentTarget\.reset/);
 });

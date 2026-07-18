@@ -44,14 +44,38 @@ def games_to_next_level(current_xp: int, required_xp: int, average_gain: float) 
     return int((remaining + average_gain - 1) // average_gain)
 
 
-def xp_to_level_30(current_level: int, current_xp: int, current_required: int = 0) -> int:
-    if current_level >= 30:
+def xp_to_level(
+    current_level: int,
+    current_xp: int,
+    target_level: int,
+    current_required: int = 0,
+) -> int:
+    """Return account XP remaining to a target on the supported road to level 30."""
+    target_level = max(1, min(30, int(target_level)))
+    if current_level >= target_level:
         return 0
     required_now = current_required or LEVEL_XP_REQUIREMENTS.get(current_level, 0)
     remaining = max(0, required_now - current_xp)
-    for level in range(current_level + 1, 30):
+    for level in range(current_level + 1, target_level):
         remaining += LEVEL_XP_REQUIREMENTS.get(level, 0)
     return remaining
+
+
+def games_to_level(
+    current_level: int,
+    current_xp: int,
+    current_required: int,
+    target_level: int,
+    average_gain: float,
+) -> int | None:
+    if average_gain <= 0:
+        return None
+    remaining = xp_to_level(current_level, current_xp, target_level, current_required)
+    return int((remaining + average_gain - 1) // average_gain)
+
+
+def xp_to_level_30(current_level: int, current_xp: int, current_required: int = 0) -> int:
+    return xp_to_level(current_level, current_xp, 30, current_required)
 
 
 def games_to_level_30(
@@ -60,7 +84,4 @@ def games_to_level_30(
     current_required: int,
     average_gain: float,
 ) -> int | None:
-    if average_gain <= 0:
-        return None
-    remaining = xp_to_level_30(current_level, current_xp, current_required)
-    return int((remaining + average_gain - 1) // average_gain)
+    return games_to_level(current_level, current_xp, current_required, 30, average_gain)

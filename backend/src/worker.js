@@ -39,7 +39,7 @@ async function riotJson(url, riotApiKey) {
     response = await fetch(url, {
       headers: {
         "X-Riot-Token": riotApiKey,
-        "User-Agent": "LoL-XP-Tracker-Private/0.8"
+        "User-Agent": "LoL-XP-Tracker-Private/0.9"
       }
     });
   } catch {

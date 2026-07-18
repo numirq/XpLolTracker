@@ -13,13 +13,18 @@ from typing import Any, Callable
 
 try:
     import pystray
-    from PIL import Image, ImageDraw
 except Exception:  # Optional tray backends may also fail on systems without a display.
     pystray = None
+
+try:
+    from PIL import Image, ImageDraw, ImageTk
+except Exception:
     Image = None
     ImageDraw = None
+    ImageTk = None
 
 from . import __version__
+from .champion_icons import ChampionIconCache
 from .database import Database
 from .lcu_client import LcuClient, LcuError
 from .riot_api import REGIONAL_ROUTES, RiotApiClient, RiotApiError, parse_backend_invitation
@@ -30,7 +35,12 @@ from .updater import (
     launch_prepared_update,
     prepare_update,
 )
-from .xp import calculate_xp_gain, games_to_level_30, progress_percent, xp_to_level_30
+from .xp import (
+    calculate_xp_gain,
+    games_to_level,
+    progress_percent,
+    xp_to_level,
+)
 
 
 COLORS = {
@@ -233,6 +243,64 @@ class AccountDialog(tk.Toplevel):
         except (ValueError, sqlite3.IntegrityError) as error:
             text = "Takie konto jest już dodane." if isinstance(error, sqlite3.IntegrityError) else str(error)
             messagebox.showerror("Nie można zapisać", text, parent=self)
+
+
+class GoalDialog(tk.Toplevel):
+    def __init__(self, parent: "TrackerApp", account: sqlite3.Row):
+        super().__init__(parent)
+        self.parent = parent
+        self.account = account
+        self.title("Cel poziomu")
+        self.configure(bg=COLORS["bg"])
+        self.geometry("470x280")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        box = Card(self)
+        box.pack(fill="both", expand=True, padx=22, pady=22)
+        tk.Label(
+            box, text="Ustaw cel poziomu", bg=COLORS["card"], fg=COLORS["text"],
+            font=("Segoe UI Semibold", 17),
+        ).pack(anchor="w", padx=18, pady=(18, 4))
+        tk.Label(
+            box,
+            text=(
+                f"Aktualnie: poziom {account['current_level']}. "
+                "Tracker obliczy pozostałe XP i przewidywaną liczbę gier."
+            ),
+            bg=COLORS["card"], fg=COLORS["muted"], font=("Segoe UI", 9),
+            wraplength=390, justify="left",
+        ).pack(anchor="w", padx=18, pady=(0, 12))
+        self.goal = tk.StringVar(value=str(account["goal_level"] or 30))
+        tk.Spinbox(
+            box, from_=max(2, int(account["current_level"]) + 1), to=30,
+            textvariable=self.goal, bg=COLORS["input"], fg=COLORS["text"],
+            buttonbackground=COLORS["card_alt"], insertbackground=COLORS["text"],
+            relief="flat", font=("Segoe UI", 11),
+        ).pack(fill="x", padx=18, ipady=7)
+
+        actions = tk.Frame(box, bg=COLORS["card"])
+        actions.pack(fill="x", padx=18, pady=18)
+        StyledButton(actions, text="Anuluj", secondary=True, command=self.destroy).pack(side="left")
+        StyledButton(actions, text="Zapisz cel", command=self.save).pack(side="right")
+        self.bind("<Return>", lambda _event: self.save())
+        self.bind("<Escape>", lambda _event: self.destroy())
+
+    def save(self) -> None:
+        try:
+            goal = int(self.goal.get())
+            current = int(self.account["current_level"])
+            if current >= 30:
+                raise ValueError("Poziom 30 został już osiągnięty.")
+            if goal <= current or goal > 30:
+                raise ValueError(f"Wybierz poziom od {current + 1} do 30.")
+            self.parent.db.update_account_goal(int(self.account["id"]), goal)
+            self.destroy()
+            self.parent.refresh_all()
+            self.parent.set_status(f"Ustawiono cel: poziom {goal}.", COLORS["green"])
+        except ValueError as error:
+            messagebox.showerror("Nie można ustawić celu", str(error), parent=self)
 
 
 class GameDialog(tk.Toplevel):
@@ -699,9 +767,9 @@ class UpdateSettingsDialog(tk.Toplevel):
     def __init__(self, parent: "TrackerApp"):
         super().__init__(parent)
         self.parent = parent
-        self.title("Aktualizacje")
+        self.title("Aktualizacje i powiadomienia")
         self.configure(bg=COLORS["bg"])
-        self.geometry("620x390")
+        self.geometry("620x430")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -735,6 +803,15 @@ class UpdateSettingsDialog(tk.Toplevel):
             bg=COLORS["card"], fg=COLORS["text"], activebackground=COLORS["card"],
             activeforeground=COLORS["text"], selectcolor=COLORS["input"], font=("Segoe UI", 9),
         ).pack(anchor="w", padx=14, pady=(0, 10))
+        self.notifications = tk.BooleanVar(
+            value=parent.db.get_setting("system_notifications", "1") == "1"
+        )
+        tk.Checkbutton(
+            box, text="Pokazuj powiadomienia Windows po meczu i awansie",
+            variable=self.notifications,
+            bg=COLORS["card"], fg=COLORS["text"], activebackground=COLORS["card"],
+            activeforeground=COLORS["text"], selectcolor=COLORS["input"], font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=14, pady=(0, 10))
         actions = tk.Frame(box, bg=COLORS["card"])
         actions.pack(fill="x", padx=18, pady=(6, 18))
         StyledButton(actions, text="Zapisz", command=self.save).pack(side="right")
@@ -744,6 +821,9 @@ class UpdateSettingsDialog(tk.Toplevel):
     def _save_values(self) -> None:
         self.parent.db.set_setting("update_manifest_url", self.url.get().strip())
         self.parent.db.set_setting("auto_updates", "1" if self.auto.get() else "0")
+        self.parent.db.set_setting(
+            "system_notifications", "1" if self.notifications.get() else "0"
+        )
 
     def save(self) -> None:
         self._save_values()
@@ -826,12 +906,14 @@ class SessionDialog(tk.Toplevel):
         session = parent.db.stats_created_since(int(account["id"]), parent.session_started_at)
         overall = parent.db.stats(int(account["id"]))
         average = float(overall["avg_xp"] or 0)
-        remaining = xp_to_level_30(
-            int(account["current_level"]), int(account["current_xp"]), int(account["xp_required"])
-        )
-        estimated_games = games_to_level_30(
+        goal_level = int(account["goal_level"] or 30)
+        remaining = xp_to_level(
             int(account["current_level"]), int(account["current_xp"]),
-            int(account["xp_required"]), average,
+            goal_level, int(account["xp_required"]),
+        )
+        estimated_games = games_to_level(
+            int(account["current_level"]), int(account["current_xp"]),
+            int(account["xp_required"]), goal_level, average,
         )
 
         header = tk.Frame(self, bg=COLORS["bg"])
@@ -849,7 +931,7 @@ class SessionDialog(tk.Toplevel):
         road = Card(self)
         road.pack(fill="x", padx=24, pady=(0, 12))
         tk.Label(
-            road, text="DROGA DO 30 POZIOMU", bg=COLORS["card"], fg=COLORS["muted"],
+            road, text=f"DROGA DO POZIOMU {goal_level}", bg=COLORS["card"], fg=COLORS["muted"],
             font=("Segoe UI Semibold", 8),
         ).pack(anchor="w", padx=18, pady=(14, 3))
         estimate_text = f"około {estimated_games} gier" if estimated_games is not None else "zagraj więcej gier, aby obliczyć"
@@ -1077,6 +1159,11 @@ class TrackerApp(tk.Tk):
         self._closing = False
         self.unknown_account_prompted: set[str] = set()
         self.tray_icon = None
+        self.client_phase = "Unavailable"
+        self.champion_icon_cache = ChampionIconCache(self.db.path.parent / "champion_icons")
+        self.champion_images: dict[str, Any] = {}
+        self.champion_loading: set[str] = set()
+        self.history_champions: dict[str, str] = {}
 
         self.title("LoL XP Tracker")
         self.geometry("1260x780")
@@ -1090,6 +1177,7 @@ class TrackerApp(tk.Tk):
         if accounts:
             self.selected_account_id = int(accounts[0]["id"])
         self.refresh_all()
+        self.after(1200, self._ensure_tray_icon)
         self.after(5000, self._poll_client)
         manifest_url = self.db.get_setting("update_manifest_url", DEFAULT_MANIFEST_URL)
         if self.db.get_setting("auto_updates", "1") == "1" and manifest_url:
@@ -1103,7 +1191,7 @@ class TrackerApp(tk.Tk):
             pass
         style.configure(
             "Treeview", background=COLORS["card"], foreground=COLORS["text"],
-            fieldbackground=COLORS["card"], rowheight=36, borderwidth=0, font=("Segoe UI", 9)
+            fieldbackground=COLORS["card"], rowheight=42, borderwidth=0, font=("Segoe UI", 9)
         )
         style.map("Treeview", background=[("selected", "#203655")], foreground=[("selected", "white")])
         style.configure(
@@ -1177,7 +1265,7 @@ class TrackerApp(tk.Tk):
             self.sidebar, text="Ukryj obok zegara", secondary=True, command=self.minimize_to_tray
         ).pack(fill="x", padx=16, pady=4)
         StyledButton(
-            self.sidebar, text="Aktualizacje", secondary=True, command=self.open_update_settings
+            self.sidebar, text="Aktualizacje i alerty", secondary=True, command=self.open_update_settings
         ).pack(fill="x", padx=16, pady=4)
         StyledButton(
             self.sidebar, text="O aplikacji", secondary=True, command=self.open_about
@@ -1189,11 +1277,13 @@ class TrackerApp(tk.Tk):
 
         safety = tk.Frame(self.sidebar, bg=COLORS["sidebar"])
         safety.pack(side="bottom", fill="x", padx=18, pady=18)
-        self.monitor_dot = tk.Label(safety, text="●", bg=COLORS["sidebar"], fg=COLORS["green"], font=("Segoe UI", 10))
+        self.monitor_dot = tk.Label(safety, text="●", bg=COLORS["sidebar"], fg=COLORS["muted"], font=("Segoe UI", 10))
         self.monitor_dot.pack(side="left")
-        tk.Label(
-            safety, text=" Monitor klienta aktywny", bg=COLORS["sidebar"], fg=COLORS["muted"], font=("Segoe UI", 9)
-        ).pack(side="left")
+        self.monitor_label = tk.Label(
+            safety, text=" Sprawdzam klienta LoL…", bg=COLORS["sidebar"],
+            fg=COLORS["muted"], font=("Segoe UI", 9), wraplength=190, justify="left"
+        )
+        self.monitor_label.pack(side="left")
 
         self.main = tk.Frame(self, bg=COLORS["bg"])
         self.main.pack(side="left", fill="both", expand=True)
@@ -1210,6 +1300,11 @@ class TrackerApp(tk.Tk):
             title_box, text="", bg=COLORS["bg"], fg=COLORS["muted"], font=("Segoe UI", 10)
         )
         self.account_subtitle.pack(anchor="w", pady=(2, 0))
+        self.live_state_label = tk.Label(
+            title_box, text="● Sprawdzam klienta LoL…", bg=COLORS["bg"],
+            fg=COLORS["muted"], font=("Segoe UI Semibold", 9),
+        )
+        self.live_state_label.pack(anchor="w", pady=(5, 0))
 
         StyledButton(top, text="Odczytaj klienta", secondary=True, command=self.sync_client).pack(side="right", padx=(8, 0))
         StyledButton(top, text="Importuj mecz", secondary=True, command=self.import_latest_match).pack(side="right", padx=(8, 0))
@@ -1229,12 +1324,24 @@ class TrackerApp(tk.Tk):
         self.xp_label.pack(anchor="w", pady=(4, 6))
         self.progress = ttk.Progressbar(summary_left, style="XP.Horizontal.TProgressbar", maximum=100)
         self.progress.pack(fill="x", pady=(0, 2), ipady=3)
+        goal_line = tk.Frame(summary_left, bg=COLORS["card"])
+        goal_line.pack(fill="x", pady=(7, 0))
+        self.goal_label = tk.Label(
+            goal_line, text="", bg=COLORS["card"], fg=COLORS["muted"], font=("Segoe UI", 9)
+        )
+        self.goal_label.pack(side="left")
+        tk.Button(
+            goal_line, text="Zmień cel", command=self.open_goal_dialog,
+            bg=COLORS["card_alt"], fg=COLORS["text"], activebackground="#223351",
+            activeforeground=COLORS["text"], relief="flat", bd=0, padx=10, pady=3,
+            cursor="hand2", font=("Segoe UI Semibold", 8),
+        ).pack(side="right")
 
         self.stat_labels: dict[str, tk.Label] = {}
         stats_box = tk.Frame(self.summary, bg=COLORS["card"])
         stats_box.pack(side="right", padx=10, pady=12)
         for idx, (key, title) in enumerate(
-            [("games", "GRY"), ("avg", "ŚR. XP"), ("winrate", "WIN RATE"), ("next", "DO 30 LVL")]
+            [("games", "GRY"), ("avg", "ŚR. XP"), ("winrate", "WIN RATE"), ("next", "DO CELU")]
         ):
             cell = tk.Frame(stats_box, bg=COLORS["card"], width=105)
             cell.grid(row=0, column=idx, padx=9)
@@ -1305,7 +1412,9 @@ class TrackerApp(tk.Tk):
         StyledButton(filters, text="Wyczyść", secondary=True, command=self.clear_filters).pack(side="right")
 
         columns = ("date", "champion", "result", "kda", "cs", "mode", "duration", "gain", "after")
-        self.tree = ttk.Treeview(table_card, columns=columns, show="headings", selectmode="browse")
+        self.tree = ttk.Treeview(table_card, columns=columns, show="tree headings", selectmode="browse")
+        self.tree.heading("#0", text="")
+        self.tree.column("#0", width=48, minwidth=48, stretch=False, anchor="center")
         headings = {
             "date": "DATA", "champion": "BOHATER", "result": "WYNIK", "kda": "K / D / A",
             "cs": "CS", "mode": "TRYB", "duration": "CZAS", "gain": "+XP", "after": "STAN PO GRZE"
@@ -1314,8 +1423,8 @@ class TrackerApp(tk.Tk):
         for column in columns:
             self.tree.heading(column, text=headings[column])
             self.tree.column(column, width=widths[column], minwidth=45, anchor="w", stretch=column in ("date", "champion", "mode"))
-        self.tree.tag_configure("win", foreground=COLORS["green"])
-        self.tree.tag_configure("loss", foreground=COLORS["red"])
+        self.tree.tag_configure("win", foreground=COLORS["text"], background="#102922")
+        self.tree.tag_configure("loss", foreground=COLORS["text"], background="#291820")
         self.tree.tag_configure("unknown", foreground=COLORS["muted"])
         self.tree.bind("<Double-1>", lambda _event: self.show_selected_game_details())
         self.tree.bind("<Delete>", lambda _event: self.delete_selected_game())
@@ -1327,8 +1436,42 @@ class TrackerApp(tk.Tk):
     def _close(self) -> None:
         self.exit_app()
 
-    def minimize_to_tray(self) -> None:
+    def _ensure_tray_icon(self) -> bool:
         if pystray is None or Image is None or ImageDraw is None:
+            return False
+        if self.tray_icon is not None:
+            return True
+        try:
+            icon_image = Image.new("RGBA", (64, 64), COLORS["sidebar"])
+            draw = ImageDraw.Draw(icon_image)
+            draw.rounded_rectangle(
+                (5, 5, 59, 59), radius=12, fill=COLORS["card_alt"],
+                outline=COLORS["gold"], width=4,
+            )
+            draw.text((22, 14), "L", fill=COLORS["gold"], stroke_width=1)
+            menu = pystray.Menu(
+                pystray.MenuItem(
+                    "Otwórz tracker",
+                    lambda _icon, _item: self.after(0, self.restore_from_tray),
+                    default=True,
+                ),
+                pystray.MenuItem(
+                    "Podsumowanie",
+                    lambda _icon, _item: self.after(0, self._open_summary_from_tray),
+                ),
+                pystray.MenuItem("Zakończ", lambda _icon, _item: self.after(0, self.exit_app)),
+            )
+            self.tray_icon = pystray.Icon(
+                "lol_xp_tracker", icon_image, "LoL XP Tracker", menu
+            )
+            self.tray_icon.run_detached()
+            return True
+        except Exception:
+            self.tray_icon = None
+            return False
+
+    def minimize_to_tray(self) -> None:
+        if not self._ensure_tray_icon():
             if messagebox.askyesno(
                 "Brak obsługi zasobnika",
                 "Nie udało się uruchomić ikony obok zegara. Zakończyć tracker?",
@@ -1336,19 +1479,23 @@ class TrackerApp(tk.Tk):
             ):
                 self.exit_app()
             return
-        if self.tray_icon is None:
-            icon_image = Image.new("RGBA", (64, 64), COLORS["sidebar"])
-            draw = ImageDraw.Draw(icon_image)
-            draw.rounded_rectangle((5, 5, 59, 59), radius=12, fill=COLORS["card_alt"], outline=COLORS["gold"], width=4)
-            draw.text((22, 14), "L", fill=COLORS["gold"], stroke_width=1)
-            menu = pystray.Menu(
-                pystray.MenuItem("Otwórz tracker", lambda _icon, _item: self.after(0, self.restore_from_tray), default=True),
-                pystray.MenuItem("Podsumowanie", lambda _icon, _item: self.after(0, self._open_summary_from_tray)),
-                pystray.MenuItem("Zakończ", lambda _icon, _item: self.after(0, self.exit_app)),
-            )
-            self.tray_icon = pystray.Icon("lol_xp_tracker", icon_image, "LoL XP Tracker", menu)
-            self.tray_icon.run_detached()
         self.withdraw()
+
+    def notify_user(
+        self,
+        title: str,
+        message: str,
+        color: str = COLORS["green"],
+    ) -> None:
+        Toast(self, title, message, color)
+        if self.db.get_setting("system_notifications", "1") != "1":
+            return
+        if not self._ensure_tray_icon() or self.tray_icon is None:
+            return
+        try:
+            self.tray_icon.notify(message, title)
+        except Exception:
+            pass
 
     def restore_from_tray(self) -> None:
         self.deiconify()
@@ -1372,6 +1519,36 @@ class TrackerApp(tk.Tk):
 
     def set_status(self, text: str, color: str | None = None) -> None:
         self.status.configure(text=text, fg=color or COLORS["muted"])
+
+    def _update_client_status(self, snapshot: dict[str, Any] | None) -> None:
+        if not snapshot:
+            phase = "Unavailable"
+            text, color = " Klient LoL wyłączony", COLORS["muted"]
+        else:
+            phase = str(snapshot.get("gameflow_phase") or "Connected")
+            states = {
+                "None": (" Klient otwarty", COLORS["teal"]),
+                "Connected": (" Klient otwarty", COLORS["teal"]),
+                "Lobby": (" W lobby", COLORS["teal"]),
+                "Matchmaking": (" Szukanie gry", COLORS["gold"]),
+                "ReadyCheck": (" Potwierdź gotowość", COLORS["gold"]),
+                "ChampSelect": (" Wybór bohatera", COLORS["gold"]),
+                "InProgress": (" Mecz trwa", COLORS["green"]),
+                "Reconnect": (" Powrót do meczu", COLORS["gold"]),
+                "WaitingForStats": (" Mecz zakończony • czekam na XP", COLORS["teal"]),
+                "PreEndOfGame": (" Mecz zakończony • czekam na XP", COLORS["teal"]),
+                "EndOfGame": (" Podsumowanie po meczu", COLORS["teal"]),
+            }
+            text, color = states.get(phase, (" Klient połączony", COLORS["teal"]))
+        self.client_phase = phase
+        self.monitor_dot.configure(fg=color)
+        self.monitor_label.configure(text=text, fg=color if phase != "Unavailable" else COLORS["muted"])
+        self.live_state_label.configure(text="●" + text, fg=color)
+        if self.tray_icon is not None:
+            try:
+                self.tray_icon.title = f"LoL XP Tracker — {text.strip()}"
+            except Exception:
+                pass
 
     def current_account(self) -> sqlite3.Row | None:
         return self.db.get_account(self.selected_account_id) if self.selected_account_id else None
@@ -1472,11 +1649,18 @@ class TrackerApp(tk.Tk):
 
     def _refresh_content(self) -> None:
         account = self.current_account()
+        self.history_champions.clear()
         for item in self.tree.get_children():
             self.tree.delete(item)
         if not account:
             self.account_title.configure(text="Dodaj pierwsze konto")
             self.account_subtitle.configure(text="Historia każdego konta będzie przechowywana osobno.")
+            self.level_label.configure(text="Brak wybranego konta")
+            self.xp_label.configure(text="Dodaj konto albo odczytaj je z klienta LoL.")
+            self.goal_label.configure(text="Cel ustawisz po dodaniu konta.", fg=COLORS["muted"])
+            self.progress["value"] = 0
+            for label in self.stat_labels.values():
+                label.configure(text="—", fg=COLORS["text"])
             return
 
         self.account_title.configure(text=f"{account['game_name']}#{account['tag_line']}")
@@ -1493,13 +1677,31 @@ class TrackerApp(tk.Tk):
         average = float(stats["avg_xp"] or 0)
         decided = int(stats["decided"] or 0)
         wins = int(stats["wins"] or 0)
-        estimate = games_to_level_30(
+        goal_level = int(account["goal_level"] or 30)
+        remaining_goal = xp_to_level(
             int(account["current_level"]), int(account["current_xp"]),
-            int(account["xp_required"]), average,
+            goal_level, int(account["xp_required"]),
         )
+        estimate = games_to_level(
+            int(account["current_level"]), int(account["current_xp"]),
+            int(account["xp_required"]), goal_level, average,
+        )
+        if int(account["current_level"]) >= goal_level:
+            self.goal_label.configure(text=f"Cel: poziom {goal_level} osiągnięty", fg=COLORS["green"])
+        else:
+            remaining_text = f"{remaining_goal:,}".replace(",", " ")
+            games_text = f" • około {estimate} gier" if estimate is not None else ""
+            self.goal_label.configure(
+                text=f"Cel: poziom {goal_level} • pozostało {remaining_text} XP{games_text}",
+                fg=COLORS["muted"],
+            )
         self.stat_labels["games"].configure(text=str(stats["games"]))
         self.stat_labels["avg"].configure(text=f"{average:.0f}" if average else "—")
-        self.stat_labels["winrate"].configure(text=f"{wins / decided * 100:.0f}%" if decided else "—")
+        winrate = wins / decided * 100 if decided else None
+        self.stat_labels["winrate"].configure(
+            text=f"{winrate:.0f}%" if winrate is not None else "—",
+            fg=COLORS["teal"] if winrate is not None and winrate >= 50 else COLORS["gold"],
+        )
         self.stat_labels["next"].configure(text=str(estimate) if estimate is not None else "—")
 
         queue_names = ["Wszystkie tryby", *self.db.queue_names(int(account["id"]))]
@@ -1518,15 +1720,19 @@ class TrackerApp(tk.Tk):
         )
         for game in games:
             if game["win"] == 1:
-                result, tag = "Wygrana", "win"
+                result, tag = "● Wygrana", "win"
             elif game["win"] == 0:
-                result, tag = "Przegrana", "loss"
+                result, tag = "● Przegrana", "loss"
             else:
                 result, tag = "—", "unknown"
             gain = f"+{game['xp_gained']}" if game["xp_gained"] is not None else "—"
             after = f"Lv {game['level_after']} • {game['xp_after']} XP"
+            champion_key = str(game["champion"] or "").casefold()
+            item_id = str(game["id"])
+            self.history_champions[item_id] = champion_key
             self.tree.insert(
                 "", "end", iid=str(game["id"]),
+                image=self.champion_images.get(champion_key, ""),
                 values=(
                     format_date(game["played_at"]), game["champion"], result,
                     f"{game['kills']} / {game['deaths']} / {game['assists']}", game["cs"],
@@ -1534,6 +1740,61 @@ class TrackerApp(tk.Tk):
                 ),
                 tags=(tag,),
             )
+            self._queue_champion_icon(str(game["champion"] or ""))
+
+    def _queue_champion_icon(self, champion: str) -> None:
+        if Image is None or ImageTk is None:
+            return
+        try:
+            champion_id = self.champion_icon_cache.champion_id(champion)
+        except ValueError:
+            return
+        key = champion_id.casefold()
+        if key in self.champion_images or key in self.champion_loading:
+            return
+        self.champion_loading.add(key)
+
+        def runner() -> None:
+            try:
+                path = self.champion_icon_cache.icon_path(champion_id)
+            except Exception:
+                if not self._closing:
+                    self.after(0, lambda: self.champion_loading.discard(key))
+            else:
+                if not self._closing:
+                    self.after(0, lambda: self._apply_champion_icon(key, path))
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    def _apply_champion_icon(self, key: str, path: Path) -> None:
+        self.champion_loading.discard(key)
+        if Image is None or ImageTk is None:
+            return
+        try:
+            resampling = getattr(Image, "Resampling", Image).LANCZOS
+            with Image.open(path) as source:
+                resized = source.convert("RGBA").resize((32, 32), resampling)
+            photo = ImageTk.PhotoImage(resized)
+        except Exception:
+            return
+        self.champion_images[key] = photo
+        for item_id, champion_key in self.history_champions.items():
+            if champion_key == key and self.tree.exists(item_id):
+                self.tree.item(item_id, image=photo)
+
+    def open_goal_dialog(self) -> None:
+        account = self.current_account()
+        if not account:
+            messagebox.showinfo("Brak konta", "Najpierw dodaj konto.", parent=self)
+            return
+        if int(account["current_level"]) >= 30:
+            messagebox.showinfo(
+                "Cel osiągnięty",
+                "To konto osiągnęło już poziom 30 — cel trackera został zrealizowany.",
+                parent=self,
+            )
+            return
+        GoalDialog(self, account)
 
     def select_account(self, account_id: int) -> None:
         self.selected_account_id = account_id
@@ -1787,9 +2048,10 @@ class TrackerApp(tk.Tk):
 
     def sync_client(self) -> None:
         self.set_status("Łączę się z uruchomionym klientem LoL…", COLORS["gold"])
-        self._run_background(lambda: LcuClient().current_summoner(), self._handle_manual_snapshot)
+        self._run_background(lambda: LcuClient().live_snapshot(), self._handle_manual_snapshot)
 
     def _handle_manual_snapshot(self, snapshot: dict[str, Any]) -> None:
+        self._update_client_status(snapshot)
         account = self.db.find_account(snapshot["game_name"], snapshot["tag_line"])
         if not account:
             if messagebox.askyesno(
@@ -1834,20 +2096,20 @@ class TrackerApp(tk.Tk):
             self.poll_busy = True
             def runner() -> None:
                 try:
-                    snapshot = LcuClient().current_summoner()
+                    snapshot = LcuClient().live_snapshot()
                 except Exception:
                     snapshot = None
                 if not self._closing:
                     self.after(0, lambda: self._finish_poll(snapshot))
             threading.Thread(target=runner, daemon=True).start()
-        self.after(15000, self._poll_client)
+        self.after(5000, self._poll_client)
 
     def _finish_poll(self, snapshot: dict[str, Any] | None) -> None:
         self.poll_busy = False
         if not snapshot:
-            self.monitor_dot.configure(fg=COLORS["muted"])
+            self._update_client_status(None)
             return
-        self.monitor_dot.configure(fg=COLORS["green"])
+        self._update_client_status(snapshot)
         account = self.db.find_account(snapshot["game_name"], snapshot["tag_line"])
         if not account:
             identity = f"{snapshot['game_name']}#{snapshot['tag_line']}".casefold()
@@ -1871,8 +2133,8 @@ class TrackerApp(tk.Tk):
                     self.selected_account_id = account_id
                     self.refresh_all()
                     self.set_status("Automatycznie dodano konto wykryte w kliencie LoL.", COLORS["green"])
-                    Toast(
-                        self, "Dodano nowe konto",
+                    self.notify_user(
+                        "Dodano nowe konto",
                         f"{snapshot['game_name']}#{snapshot['tag_line']} • poziom {snapshot['level']}",
                     )
             return
@@ -1898,6 +2160,7 @@ class TrackerApp(tk.Tk):
             int(account["current_level"]), int(account["current_xp"]), int(account["xp_required"]),
             int(snapshot["level"]), int(snapshot["xp"])
         )
+        leveled_up = int(snapshot["level"]) > int(account["current_level"])
         if self.match_api_configured():
             def task() -> dict[str, Any]:
                 try:
@@ -1944,18 +2207,16 @@ class TrackerApp(tk.Tk):
                 self.refresh_all()
                 if data.get("champion") == "Do uzupełnienia":
                     self.set_status("Zapisano XP. Klucz API wymaga sprawdzenia, a statystyki uzupełnienia.", COLORS["gold"])
-                    Toast(
-                        self,
-                        "Zapisano zdobyte XP",
+                    self.notify_user(
+                        f"Awans na poziom {snapshot['level']}!" if leveled_up else "Zapisano zdobyte XP",
                         f"+{gain if gain is not None else '?'} XP • uzupełnij statystyki i sprawdź klucz API",
                         COLORS["gold"],
                     )
                 else:
                     self.set_status("Automatycznie zapisano zakończoną grę i zdobyte XP.", COLORS["green"])
                     result = "Wygrana" if data.get("win") else "Przegrana"
-                    Toast(
-                        self,
-                        "Mecz zapisany automatycznie",
+                    self.notify_user(
+                        f"Awans na poziom {snapshot['level']}!" if leveled_up else "Mecz zapisany automatycznie",
                         f"{data.get('champion', 'Nieznany')} • {result} • +{gain if gain is not None else '?'} XP",
                     )
             self._run_background(task, success, quiet=True)
@@ -1974,9 +2235,8 @@ class TrackerApp(tk.Tk):
             self.selected_account_id = int(account["id"])
             self.refresh_all()
             self.set_status("Zapisano XP. Uzupełnij statystyki ostatniej gry.", COLORS["gold"])
-            Toast(
-                self,
-                "Zapisano zdobyte XP",
+            self.notify_user(
+                f"Awans na poziom {snapshot['level']}!" if leveled_up else "Zapisano zdobyte XP",
                 f"+{gain if gain is not None else '?'} XP • uzupełnij statystyki ostatniej gry",
                 COLORS["gold"],
             )

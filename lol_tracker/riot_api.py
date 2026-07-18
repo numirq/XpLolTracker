@@ -123,7 +123,7 @@ class RiotApiClient:
     def _get(self, url: str) -> Any:
         request = Request(
             url,
-            headers={"X-Riot-Token": self.api_key, "User-Agent": "LoL-XP-Tracker/0.1"},
+            headers={"X-Riot-Token": self.api_key, "User-Agent": f"LoL-XP-Tracker/{__version__}"},
         )
         try:
             with urlopen(request, timeout=12) as response:
