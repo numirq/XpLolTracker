@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import secrets
 import sqlite3
 import sys
 import threading
@@ -21,7 +22,7 @@ except Exception:  # Optional tray backends may also fail on systems without a d
 from . import __version__
 from .database import Database
 from .lcu_client import LcuClient, LcuError
-from .riot_api import REGIONAL_ROUTES, RiotApiClient, RiotApiError
+from .riot_api import REGIONAL_ROUTES, RiotApiClient, RiotApiError, parse_backend_invitation
 from .updater import (
     DEFAULT_MANIFEST_URL,
     UpdateError,
@@ -479,7 +480,7 @@ class ApiSettingsDialog(tk.Toplevel):
         self.parent = parent
         self.title("Połączenie z danymi meczów")
         self.configure(bg=COLORS["bg"])
-        self.geometry("650x610")
+        self.geometry("650x700")
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
@@ -492,10 +493,26 @@ class ApiSettingsDialog(tk.Toplevel):
         ).pack(anchor="w", padx=18, pady=(18, 4))
         tk.Label(
             box,
-            text="Znajomi wpisują adres serwera i swój kod dostępu tylko raz. Klucz Riot pozostaje na serwerze i nigdy nie trafia do aplikacji.",
+            text="Wklej zaproszenie od właściciela. Kod jest przypisany do profilu znajomego, działa dla jego kont i nie wygasa samoczynnie.",
             bg=COLORS["card"], fg=COLORS["muted"], font=("Segoe UI", 9),
             wraplength=570, justify="left"
-        ).pack(anchor="w", padx=18, pady=(0, 14))
+        ).pack(anchor="w", padx=18, pady=(0, 10))
+
+        tk.Label(
+            box, text="Zaproszenie jednym wklejeniem", bg=COLORS["card"], fg=COLORS["muted"],
+            font=("Segoe UI Semibold", 8)
+        ).pack(anchor="w", padx=18)
+        invite_row = tk.Frame(box, bg=COLORS["card"])
+        invite_row.pack(fill="x", padx=18, pady=(5, 13))
+        self.invitation = tk.StringVar()
+        invite_entry = tk.Entry(
+            invite_row, textvariable=self.invitation, bg=COLORS["input"], fg=COLORS["text"],
+            insertbackground=COLORS["text"], relief="flat", font=("Consolas", 9)
+        )
+        invite_entry.pack(side="left", fill="x", expand=True, ipady=8)
+        StyledButton(
+            invite_row, text="Wczytaj", secondary=True, command=self.import_invitation
+        ).pack(side="left", padx=(8, 0))
 
         tk.Label(
             box, text="Adres serwera HTTPS", bg=COLORS["card"], fg=COLORS["muted"],
@@ -537,12 +554,28 @@ class ApiSettingsDialog(tk.Toplevel):
             insertbackground=COLORS["text"], relief="flat", font=("Consolas", 9)
         )
         local_key_entry.pack(fill="x", padx=18, pady=(0, 8), ipady=8)
-        (backend_entry if not self.backend_url.get() else token_entry).focus_set()
+        (invite_entry if not self.backend_url.get() else token_entry).focus_set()
+        invite_entry.bind("<Return>", lambda _event: self.import_invitation())
 
         actions = tk.Frame(box, bg=COLORS["card"])
         actions.pack(side="bottom", fill="x", padx=18, pady=18)
         StyledButton(actions, text="Zapisz", command=self.save).pack(side="right")
         StyledButton(actions, text="Anuluj", secondary=True, command=self.destroy).pack(side="right", padx=(0, 8))
+
+    def import_invitation(self) -> None:
+        try:
+            invitation = parse_backend_invitation(self.invitation.get())
+        except RiotApiError as error:
+            messagebox.showerror("Nieprawidłowe zaproszenie", str(error), parent=self)
+            return
+        self.backend_url.set(invitation["server"])
+        self.access_token.set(invitation["token"])
+        self.invitation.set("")
+        messagebox.showinfo(
+            "Zaproszenie wczytane",
+            "Adres serwera i bezterminowy kod dostępu są gotowe. Kliknij „Zapisz”.",
+            parent=self,
+        )
 
     def save(self) -> None:
         backend_url = self.backend_url.get().strip().rstrip("/")
@@ -1385,11 +1418,16 @@ class TrackerApp(tk.Tk):
         backend_url = self.db.get_setting("backend_url")
         access_token = self.db.get_setting("backend_access_token")
         if backend_url and access_token:
+            client_instance_id = self.db.get_setting("client_instance_id")
+            if not client_instance_id:
+                client_instance_id = secrets.token_urlsafe(24)
+                self.db.set_setting("client_instance_id", client_instance_id)
             return RiotApiClient(
                 "",
                 platform,
                 backend_url=backend_url,
                 access_token=access_token,
+                client_instance_id=client_instance_id,
             )
         return RiotApiClient(self.db.get_setting("riot_api_key"), platform)
 

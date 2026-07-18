@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import base64
 import json
 from datetime import datetime
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urlparse
 from urllib.request import Request, urlopen
+
+from . import __version__
 
 
 REGIONAL_ROUTES = {
@@ -56,6 +59,33 @@ class RiotApiError(RuntimeError):
         self.code = code
 
 
+def parse_backend_invitation(value: str) -> dict[str, str]:
+    invitation = value.strip()
+    prefix = "LOLXP1."
+    if not invitation.startswith(prefix):
+        raise RiotApiError(
+            "To nie jest prawidłowe zaproszenie LoL XP Tracker.",
+            code="invalid_invitation",
+        )
+    encoded = invitation[len(prefix) :]
+    try:
+        padding = "=" * (-len(encoded) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(encoded + padding).decode("utf-8"))
+    except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RiotApiError(
+            "Zaproszenie jest uszkodzone albo niepełne.",
+            code="invalid_invitation",
+        ) from error
+    if not isinstance(payload, dict):
+        raise RiotApiError("Zaproszenie ma nieprawidłowy format.", code="invalid_invitation")
+    server = str(payload.get("server") or "").strip().rstrip("/")
+    token = str(payload.get("token") or "").strip()
+    parsed = urlparse(server)
+    if parsed.scheme != "https" or not parsed.netloc or len(token) < 24 or len(token) > 256:
+        raise RiotApiError("Zaproszenie ma nieprawidłowe dane.", code="invalid_invitation")
+    return {"server": server, "token": token}
+
+
 class RiotApiClient:
     def __init__(
         self,
@@ -64,12 +94,14 @@ class RiotApiClient:
         *,
         backend_url: str = "",
         access_token: str = "",
+        client_instance_id: str = "",
     ):
         self.api_key = api_key.strip()
         self.platform = platform.upper()
         self.region = REGIONAL_ROUTES.get(self.platform, "europe")
         self.backend_url = backend_url.strip().rstrip("/")
         self.access_token = access_token.strip()
+        self.client_instance_id = client_instance_id.strip()
         if self.backend_url:
             parsed = urlparse(self.backend_url)
             if parsed.scheme != "https" or not parsed.netloc:
@@ -118,7 +150,9 @@ class RiotApiClient:
             headers={
                 "Authorization": f"Bearer {self.access_token}",
                 "Accept": "application/json",
-                "User-Agent": "LoL-XP-Tracker/0.7",
+                "User-Agent": f"LoL-XP-Tracker/{__version__}",
+                "X-Tracker-Version": __version__,
+                "X-Client-Instance": self.client_instance_id,
             },
         )
         try:

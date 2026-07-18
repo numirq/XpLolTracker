@@ -1,3 +1,4 @@
+import base64
 import io
 import json
 import tempfile
@@ -8,7 +9,7 @@ from unittest.mock import patch
 
 from lol_tracker.database import Database
 from lol_tracker.lcu_client import LcuClient
-from lol_tracker.riot_api import RiotApiClient, RiotApiError
+from lol_tracker.riot_api import RiotApiClient, RiotApiError, parse_backend_invitation
 from lol_tracker.ui import TrackerApp
 from lol_tracker.updater import version_tuple
 from lol_tracker.xp import (
@@ -193,12 +194,15 @@ class RiotParserTests(unittest.TestCase):
             "EUW1",
             backend_url="https://tracker.example.workers.dev",
             access_token="friend-token-with-more-than-24-characters",
+            client_instance_id="local-installation-identifier-123",
         )
         with patch("lol_tracker.riot_api.urlopen", return_value=Response()) as opener:
             parsed = client.latest_match("Test Player", "EUW")
 
         request = opener.call_args.args[0]
         self.assertEqual(request.headers["Authorization"], "Bearer friend-token-with-more-than-24-characters")
+        self.assertEqual(request.headers["X-client-instance"], "local-installation-identifier-123")
+        self.assertEqual(request.headers["X-tracker-version"], "0.8.0")
         self.assertIn("game_name=Test+Player", request.full_url)
         self.assertEqual(parsed["queue_name"], "Ranked Solo/Duo")
         self.assertEqual(parsed["source"], "private_backend")
@@ -231,6 +235,24 @@ class RiotParserTests(unittest.TestCase):
                 access_token="friend-token-with-more-than-24-characters",
             )
         self.assertEqual(raised.exception.code, "configuration_error")
+
+    def test_parses_one_paste_backend_invitation(self):
+        payload = json.dumps(
+            {
+                "server": "https://tracker.example.workers.dev",
+                "token": "permanent-friend-token-with-32-characters",
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        parsed = parse_backend_invitation(f"LOLXP1.{encoded}")
+        self.assertEqual(parsed["server"], "https://tracker.example.workers.dev")
+        self.assertEqual(parsed["token"], "permanent-friend-token-with-32-characters")
+
+    def test_rejects_damaged_backend_invitation(self):
+        with self.assertRaises(RiotApiError) as raised:
+            parse_backend_invitation("LOLXP1.not-valid-base64!")
+        self.assertEqual(raised.exception.code, "invalid_invitation")
 
 
 class LcuParserTests(unittest.TestCase):
