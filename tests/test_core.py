@@ -256,10 +256,53 @@ class RiotParserTests(unittest.TestCase):
         request = opener.call_args.args[0]
         self.assertEqual(request.headers["Authorization"], "Bearer friend-token-with-more-than-24-characters")
         self.assertEqual(request.headers["X-client-instance"], "local-installation-identifier-123")
-        self.assertEqual(request.headers["X-tracker-version"], "0.9.1")
+        self.assertEqual(request.headers["X-tracker-version"], "0.10.0")
         self.assertIn("game_name=Test+Player", request.full_url)
         self.assertEqual(parsed["queue_name"], "Ranked Solo/Duo")
         self.assertEqual(parsed["source"], "private_backend")
+
+    def test_private_backend_shares_and_fetches_friend_progress(self):
+        payload = {
+            "viewer_friend_id": "f1",
+            "refreshed_at": "2026-07-26T20:00:00Z",
+            "friends": [{"id": "f1", "name": "Bartek", "is_viewer": True, "accounts": []}],
+        }
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def read(self):
+                return json.dumps(payload).encode("utf-8")
+
+        client = RiotApiClient(
+            "",
+            "EUW1",
+            backend_url="https://tracker.example.workers.dev",
+            access_token="friend-token-with-more-than-24-characters",
+            client_instance_id="local-installation-identifier-123",
+        )
+        accounts = [{
+            "game_name": "Razorblade",
+            "tag_line": "Kiss",
+            "platform": "EUW1",
+            "level": 24,
+            "xp": 1988,
+            "xp_required": 2304,
+            "goal_level": 30,
+        }]
+        with patch("lol_tracker.riot_api.urlopen", return_value=Response()) as opener:
+            result = client.friends_progress(accounts)
+
+        request = opener.call_args.args[0]
+        self.assertEqual(request.method, "POST")
+        self.assertTrue(request.full_url.endswith("/v1/friends/progress"))
+        self.assertEqual(request.headers["Content-type"], "application/json")
+        self.assertEqual(json.loads(request.data.decode("utf-8")), {"accounts": accounts})
+        self.assertEqual(result["friends"][0]["name"], "Bartek")
 
     def test_private_backend_reports_access_denied(self):
         body = io.BytesIO(

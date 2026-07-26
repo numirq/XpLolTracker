@@ -10,6 +10,7 @@ import {
   addFriendAccount,
   adminOverview,
   authorizeAccount,
+  authorizeFriendSession,
   authorizeRequest,
   cleanupLogs,
   createFriend,
@@ -18,8 +19,10 @@ import {
   deleteFriendAccount,
   recordActivity,
   reviewFriendAccount,
+  friendProgress,
   requireAdmin,
   rotateFriendCode,
+  syncFriendProgress,
   updateDevice,
   updateFriend
 } from "./access.js";
@@ -227,6 +230,18 @@ async function routeRequest(request, env, context) {
   }
   if (url.pathname.startsWith("/v1/admin/")) {
     return handleAdminRequest(request, env);
+  }
+  if (url.pathname === "/v1/friends/progress") {
+    if (request.method === "POST") {
+      return jsonResponse(
+        await syncFriendProgress(request, env, context, await jsonBody(request))
+      );
+    }
+    if (request.method === "GET") {
+      const session = await authorizeFriendSession(request, env, context);
+      return jsonResponse(await friendProgress(env, session.friend.id));
+    }
+    throw new ProxyError(405, "method_not_allowed", "Ta metoda nie jest dozwolona.");
   }
   if (request.method !== "GET") {
     throw new ProxyError(405, "method_not_allowed", "Ta metoda nie jest dozwolona.");
