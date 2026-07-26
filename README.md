@@ -1,6 +1,6 @@
 # LoL XP Tracker
 
-Wersja 0.10.0
+Wersja 0.10.1
 
 Desktopowy tracker poziomu konta League of Legends dla Windows. Obsługuje wiele kont i przechowuje ich historie osobno.
 
@@ -46,6 +46,7 @@ Desktopowy tracker poziomu konta League of Legends dla Windows. Obsługuje wiele
 - grupuje urządzenia pod właściwym znajomym, umożliwia wyszukiwanie, filtrowanie i zmianę nazwy profilu.
 - ma zakładkę **Znajomi**, w której osoby korzystające z jednego prywatnego serwera widzą wzajemnie udostępniony poziom, XP, cel i czas ostatniej synchronizacji;
 - automatycznie odświeża udostępniony postęp po zmianie danych konta oraz podczas otwierania listy znajomych.
+- bezpiecznie czyści tymczasowe zmienne PyInstaller przed ponownym uruchomieniem po aktualizacji, dzięki czemu systemowy Python znajduje własne Tcl/Tk.
 
 ## Uruchomienie na Windows
 
