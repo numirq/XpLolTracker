@@ -184,16 +184,18 @@ async function registerDevice(request, env, friend, context) {
       app_version: appVersion
     };
     const requested = new URL(request.url);
+    const requestedGameName = requested.searchParams.get("game_name") || "";
+    const requestedTagLine = requested.searchParams.get("tag_line") || "";
     background(
       context,
       recordActivity(env, {
         friendId: friend.id,
         deviceId: id,
         eventType: "new_device",
-        requestedAccount: normalizeAccountId(
-          requested.searchParams.get("game_name") || "",
-          requested.searchParams.get("tag_line") || ""
-        ),
+        requestedAccount:
+          requestedGameName && requestedTagLine
+            ? normalizeAccountId(requestedGameName, requestedTagLine)
+            : null,
         endpoint: requested.pathname,
         country,
         networkHash: await networkHash(request, env),
@@ -210,6 +212,32 @@ async function registerDevice(request, env, friend, context) {
     if (device) return device;
     throw error;
   }
+}
+
+export async function authorizeFriendSession(request, env, context = null) {
+  const token = bearerToken(request);
+  if (!token) {
+    throw new ProxyError(401, "access_denied", "Brak kodu dostępu do prywatnego serwera.");
+  }
+  validateAccessToken(token);
+  const database = requireDatabase(env);
+  const friend = await database
+    .prepare("SELECT * FROM friends WHERE token_hash = ? LIMIT 1")
+    .bind(await sha256Hex(token))
+    .first();
+  if (!friend) {
+    throw new ProxyError(401, "access_denied", "Kod dostępu jest nieprawidłowy.");
+  }
+  if (!friend.enabled) {
+    throw new ProxyError(401, "access_revoked", "Ten kod dostępu został wyłączony.");
+  }
+  const device = await registerDevice(request, env, friend, context);
+  return {
+    friend,
+    device,
+    country: cleanCountry(request),
+    networkHash: await networkHash(request, env)
+  };
 }
 
 async function authorizeLegacy(tokenHash, rawRules, gameName, tagLine) {
@@ -387,6 +415,163 @@ function accountValues(body) {
     platform,
     normalized: normalizeAccountId(gameName, tagLine)
   };
+}
+
+function progressNumber(value, field, minimum, maximum) {
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < minimum || number > maximum) {
+    throw new ProxyError(400, "invalid_progress", `Nieprawidłowe pole ${field}.`);
+  }
+  return number;
+}
+
+function progressValues(body) {
+  const account = accountValues(body);
+  const currentLevel = progressNumber(body.level, "level", 1, 1_000_000);
+  const currentXp = progressNumber(body.xp, "xp", 0, 100_000_000);
+  const xpRequired = progressNumber(body.xp_required, "xp_required", 0, 100_000_000);
+  const goalLevel = progressNumber(
+    body.goal_level === undefined ? Math.max(30, currentLevel + 1) : body.goal_level,
+    "goal_level",
+    2,
+    1_000_000
+  );
+  if (xpRequired && currentXp > xpRequired) {
+    throw new ProxyError(400, "invalid_progress", "Aktualne XP przekracza rozmiar paska.");
+  }
+  return { ...account, currentLevel, currentXp, xpRequired, goalLevel };
+}
+
+export async function friendProgress(env, viewerFriendId) {
+  const database = requireDatabase(env);
+  const [friendResult, accountResult] = await Promise.all([
+    database
+      .prepare("SELECT id, name FROM friends WHERE enabled = 1 ORDER BY name COLLATE NOCASE")
+      .all(),
+    database
+      .prepare(
+        `SELECT a.id, a.friend_id, a.game_name, a.tag_line, a.platform,
+                a.current_level, a.current_xp, a.xp_required, a.goal_level,
+                a.progress_updated_at
+         FROM friend_accounts a
+         JOIN friends f ON f.id = a.friend_id
+         WHERE f.enabled = 1
+         ORDER BY a.game_name COLLATE NOCASE, a.tag_line COLLATE NOCASE`
+      )
+      .all()
+  ]);
+  const accounts = rows(accountResult);
+  return {
+    viewer_friend_id: viewerFriendId,
+    refreshed_at: utcNow(),
+    friends: rows(friendResult).map((friend) => ({
+      id: friend.id,
+      name: friend.name,
+      is_viewer: friend.id === viewerFriendId,
+      accounts: accounts.filter((account) => account.friend_id === friend.id)
+    }))
+  };
+}
+
+export async function syncFriendProgress(request, env, context, body) {
+  const session = await authorizeFriendSession(request, env, context);
+  const submitted = body?.accounts;
+  if (!Array.isArray(submitted) || submitted.length > 50) {
+    throw new ProxyError(
+      400,
+      "invalid_progress",
+      "Lista udostępnianych kont jest nieprawidłowa."
+    );
+  }
+  const database = requireDatabase(env);
+  const now = utcNow();
+  for (const item of submitted) {
+    const progress = progressValues(item || {});
+    let account = await database
+      .prepare(
+        `SELECT id FROM friend_accounts
+         WHERE friend_id = ? AND normalized_account = ? LIMIT 1`
+      )
+      .bind(session.friend.id, progress.normalized)
+      .first();
+    let autoAdded = false;
+    if (!account) {
+      const accountId = randomId();
+      try {
+        const result = await database
+          .prepare(
+            `INSERT INTO friend_accounts
+              (id, friend_id, game_name, tag_line, normalized_account, platform,
+               created_at, reviewed)
+             VALUES (?, ?, ?, ?, ?, ?, ?, 0)`
+          )
+          .bind(
+            accountId,
+            session.friend.id,
+            progress.gameName,
+            progress.tagLine,
+            progress.normalized,
+            progress.platform,
+            now
+          )
+          .run();
+        autoAdded = Boolean(result.meta?.changes);
+      } catch {
+        // Another request may have inserted the same account at the same time.
+      }
+      account = await database
+        .prepare(
+          `SELECT id FROM friend_accounts
+           WHERE friend_id = ? AND normalized_account = ? LIMIT 1`
+        )
+        .bind(session.friend.id, progress.normalized)
+        .first();
+    }
+    if (!account) {
+      throw new ProxyError(
+        503,
+        "account_registration_failed",
+        "Nie udało się udostępnić postępu konta."
+      );
+    }
+    await database
+      .prepare(
+        `UPDATE friend_accounts
+         SET game_name = ?, tag_line = ?, platform = ?, current_level = ?,
+             current_xp = ?, xp_required = ?, goal_level = ?, progress_updated_at = ?
+         WHERE id = ? AND friend_id = ?`
+      )
+      .bind(
+        progress.gameName,
+        progress.tagLine,
+        progress.platform,
+        progress.currentLevel,
+        progress.currentXp,
+        progress.xpRequired,
+        progress.goalLevel,
+        now,
+        account.id,
+        session.friend.id
+      )
+      .run();
+    if (autoAdded) {
+      background(
+        context,
+        recordActivity(env, {
+          friendId: session.friend.id,
+          deviceId: session.device.id,
+          eventType: "account_auto_added",
+          requestedAccount: progress.normalized,
+          endpoint: new URL(request.url).pathname,
+          country: session.country,
+          networkHash: session.networkHash,
+          result: "allowed",
+          details: progress.platform
+        })
+      );
+    }
+  }
+  return friendProgress(env, session.friend.id);
 }
 
 function encodeInvitation(serverUrl, token) {

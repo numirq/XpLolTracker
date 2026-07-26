@@ -143,17 +143,35 @@ class RiotApiClient:
         except (URLError, TimeoutError) as error:
             raise RiotApiError("Nie udało się połączyć z API Riot.") from error
 
-    def _get_backend(self, path: str, parameters: dict[str, str]) -> Any:
-        url = f"{self.backend_url}{path}?{urlencode(parameters)}"
+    def _backend_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        parameters: dict[str, str] | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> Any:
+        query = f"?{urlencode(parameters)}" if parameters else ""
+        url = f"{self.backend_url}{path}{query}"
+        body = (
+            json.dumps(payload, separators=(",", ":")).encode("utf-8")
+            if payload is not None
+            else None
+        )
+        headers = {
+            "Authorization": f"Bearer {self.access_token}",
+            "Accept": "application/json",
+            "User-Agent": f"LoL-XP-Tracker/{__version__}",
+            "X-Tracker-Version": __version__,
+            "X-Client-Instance": self.client_instance_id,
+        }
+        if body is not None:
+            headers["Content-Type"] = "application/json"
         request = Request(
             url,
-            headers={
-                "Authorization": f"Bearer {self.access_token}",
-                "Accept": "application/json",
-                "User-Agent": f"LoL-XP-Tracker/{__version__}",
-                "X-Tracker-Version": __version__,
-                "X-Client-Instance": self.client_instance_id,
-            },
+            data=body,
+            headers=headers,
+            method=method,
         )
         try:
             with urlopen(request, timeout=20) as response:
@@ -188,6 +206,27 @@ class RiotApiClient:
                 "Nie udało się połączyć z prywatnym serwerem trackera.",
                 code="backend_unavailable",
             ) from error
+
+    def _get_backend(self, path: str, parameters: dict[str, str]) -> Any:
+        return self._backend_request("GET", path, parameters=parameters)
+
+    def friends_progress(self, accounts: list[dict[str, Any]]) -> dict[str, Any]:
+        if not self.backend_url:
+            raise RiotApiError(
+                "Lista znajomych wymaga połączenia z prywatnym serwerem.",
+                code="configuration_error",
+            )
+        data = self._backend_request(
+            "POST",
+            "/v1/friends/progress",
+            payload={"accounts": accounts},
+        )
+        if not isinstance(data, dict) or not isinstance(data.get("friends"), list):
+            raise RiotApiError(
+                "Prywatny serwer zwrócił nieprawidłową listę znajomych.",
+                code="backend_error",
+            )
+        return data
 
     @staticmethod
     def _parse_backend_match(data: dict[str, Any]) -> dict[str, Any]:

@@ -1149,6 +1149,249 @@ class ActivityCalendarDialog(tk.Toplevel):
         )
 
 
+class FriendsDialog(tk.Toplevel):
+    def __init__(self, parent: "TrackerApp"):
+        super().__init__(parent)
+        self.parent = parent
+        self.data: dict[str, Any] = {"friends": []}
+        self.title("Znajomi — wspólny postęp")
+        self.configure(bg=COLORS["bg"])
+        self.geometry("980x680")
+        self.resizable(False, False)
+        self.transient(parent)
+
+        header = tk.Frame(self, bg=COLORS["bg"])
+        header.pack(fill="x", padx=24, pady=(22, 12))
+        title_box = tk.Frame(header, bg=COLORS["bg"])
+        title_box.pack(side="left", fill="x", expand=True)
+        tk.Label(
+            title_box,
+            text="Znajomi",
+            bg=COLORS["bg"],
+            fg=COLORS["text"],
+            font=("Segoe UI Semibold", 21),
+        ).pack(anchor="w")
+        tk.Label(
+            title_box,
+            text="Poziom, XP i cele wszystkich osób korzystających z prywatnego serwera.",
+            bg=COLORS["bg"],
+            fg=COLORS["muted"],
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(3, 0))
+        self.refresh_button = StyledButton(
+            header, text="Odśwież", secondary=True, command=self.load
+        )
+        self.refresh_button.pack(side="right")
+
+        toolbar = Card(self)
+        toolbar.pack(fill="x", padx=24, pady=(0, 12))
+        tk.Label(
+            toolbar, text="Szukaj:", bg=COLORS["card"], fg=COLORS["muted"],
+            font=("Segoe UI", 9),
+        ).pack(side="left", padx=(16, 6), pady=12)
+        self.search = tk.StringVar()
+        search_entry = tk.Entry(
+            toolbar,
+            textvariable=self.search,
+            bg=COLORS["input"],
+            fg=COLORS["text"],
+            insertbackground=COLORS["text"],
+            relief="flat",
+            font=("Segoe UI", 10),
+            width=30,
+        )
+        search_entry.pack(side="left", ipady=6, pady=12)
+        search_entry.bind("<KeyRelease>", lambda _event: self.render())
+        self.count_label = tk.Label(
+            toolbar, text="", bg=COLORS["card"], fg=COLORS["muted"], font=("Segoe UI", 9)
+        )
+        self.count_label.pack(side="right", padx=16)
+
+        shell = Card(self)
+        shell.pack(fill="both", expand=True, padx=24, pady=(0, 10))
+        self.canvas = tk.Canvas(shell, bg=COLORS["card"], highlightthickness=0, bd=0)
+        scrollbar = ttk.Scrollbar(shell, orient="vertical", command=self.canvas.yview)
+        self.content = tk.Frame(self.canvas, bg=COLORS["card"])
+        self.content_window = self.canvas.create_window((0, 0), window=self.content, anchor="nw")
+        self.canvas.configure(yscrollcommand=scrollbar.set)
+        self.canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+        self.content.bind(
+            "<Configure>",
+            lambda _event: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+        )
+        self.canvas.bind(
+            "<Configure>",
+            lambda event: self.canvas.itemconfigure(self.content_window, width=event.width),
+        )
+        self.bind(
+            "<MouseWheel>",
+            lambda event: self.canvas.yview_scroll(int(-event.delta / 120), "units"),
+        )
+
+        self.status = tk.Label(
+            self, text="Ładowanie listy znajomych…", bg=COLORS["bg"],
+            fg=COLORS["gold"], font=("Segoe UI", 9),
+        )
+        self.status.pack(anchor="w", padx=25, pady=(0, 14))
+        self.load()
+
+    def load(self) -> None:
+        self.refresh_button.configure(state="disabled")
+        self.status.configure(text="Synchronizuję Twój postęp i pobieram znajomych…", fg=COLORS["gold"])
+
+        def runner() -> None:
+            try:
+                result = self.parent.shared_progress_snapshot()
+            except Exception as error:
+                if not self.parent._closing:
+                    try:
+                        self.after(0, lambda caught=error: self._load_error(caught))
+                    except (RuntimeError, tk.TclError):
+                        pass
+            else:
+                if not self.parent._closing:
+                    try:
+                        self.after(0, lambda: self._load_success(result))
+                    except (RuntimeError, tk.TclError):
+                        pass
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    def _load_success(self, data: dict[str, Any]) -> None:
+        self.refresh_button.configure(state="normal")
+        self.data = data
+        self.render()
+        self.status.configure(
+            text=f"Odświeżono {format_date(str(data.get('refreshed_at') or ''))}.",
+            fg=COLORS["green"],
+        )
+        self.parent.db.set_setting("riot_api_state", "ok")
+        self.parent.refresh_api_state()
+
+    def _load_error(self, error: Exception) -> None:
+        self.refresh_button.configure(state="normal")
+        self.status.configure(text=str(error), fg=COLORS["red"])
+        if isinstance(error, RiotApiError):
+            self.parent.remember_api_error(error)
+
+    def render(self) -> None:
+        for child in self.content.winfo_children():
+            child.destroy()
+        phrase = self.search.get().strip().casefold()
+        friends = []
+        for friend in self.data.get("friends", []):
+            haystack = " ".join(
+                [
+                    str(friend.get("name") or ""),
+                    *[
+                        f"{account.get('game_name', '')}#{account.get('tag_line', '')}"
+                        for account in friend.get("accounts", [])
+                    ],
+                ]
+            ).casefold()
+            if not phrase or phrase in haystack:
+                friends.append(friend)
+        account_count = sum(len(friend.get("accounts", [])) for friend in friends)
+        self.count_label.configure(text=f"{len(friends)} znajomych  •  {account_count} kont")
+        if not friends:
+            tk.Label(
+                self.content,
+                text="Nie znaleziono znajomego ani konta.",
+                bg=COLORS["card"],
+                fg=COLORS["muted"],
+                font=("Segoe UI", 10),
+            ).pack(pady=60)
+            return
+        for friend in friends:
+            self._friend_card(friend)
+
+    def _friend_card(self, friend: dict[str, Any]) -> None:
+        card = tk.Frame(
+            self.content,
+            bg=COLORS["card_alt"],
+            highlightthickness=1,
+            highlightbackground=COLORS["gold"] if friend.get("is_viewer") else COLORS["line"],
+        )
+        card.pack(fill="x", padx=14, pady=(12, 0))
+        head = tk.Frame(card, bg=COLORS["card_alt"])
+        head.pack(fill="x", padx=16, pady=(13, 8))
+        tk.Label(
+            head,
+            text=str(friend.get("name") or "Znajomy"),
+            bg=COLORS["card_alt"],
+            fg=COLORS["text"],
+            font=("Segoe UI Semibold", 14),
+        ).pack(side="left")
+        if friend.get("is_viewer"):
+            tk.Label(
+                head, text="TY", bg=COLORS["gold"], fg="#101722",
+                padx=8, pady=2, font=("Segoe UI Semibold", 8),
+            ).pack(side="left", padx=9)
+        accounts = friend.get("accounts") or []
+        tk.Label(
+            head,
+            text=f"{len(accounts)} kont",
+            bg=COLORS["card_alt"],
+            fg=COLORS["muted"],
+            font=("Segoe UI", 9),
+        ).pack(side="right")
+        if not accounts:
+            tk.Label(
+                card,
+                text="Brak udostępnionego postępu. Dane pojawią się po uruchomieniu nowej wersji aplikacji.",
+                bg=COLORS["card_alt"],
+                fg=COLORS["muted"],
+                font=("Segoe UI", 9),
+            ).pack(anchor="w", padx=16, pady=(0, 14))
+            return
+        for account in accounts:
+            self._account_row(card, account)
+
+    def _account_row(self, parent: tk.Misc, account: dict[str, Any]) -> None:
+        row = tk.Frame(parent, bg=COLORS["input"])
+        row.pack(fill="x", padx=16, pady=(0, 10))
+        row.columnconfigure(0, weight=3)
+        row.columnconfigure(1, weight=1)
+        row.columnconfigure(2, weight=2)
+        row.columnconfigure(3, weight=1)
+        level = int(account.get("current_level") or 0)
+        xp = int(account.get("current_xp") or 0)
+        required = int(account.get("xp_required") or 0)
+        goal = int(account.get("goal_level") or 30)
+        updated = account.get("progress_updated_at")
+        tk.Label(
+            row,
+            text=f"{account.get('game_name', '—')}#{account.get('tag_line', '—')}",
+            bg=COLORS["input"], fg=COLORS["text"], font=("Segoe UI Semibold", 11),
+        ).grid(row=0, column=0, sticky="w", padx=(13, 8), pady=(10, 2))
+        tk.Label(
+            row, text=str(account.get("platform") or "—"),
+            bg=COLORS["input"], fg=COLORS["muted"], font=("Segoe UI", 8),
+        ).grid(row=1, column=0, sticky="w", padx=(13, 8), pady=(0, 10))
+        tk.Label(
+            row, text=f"Poziom {level}" if level else "Brak danych",
+            bg=COLORS["input"], fg=COLORS["gold"], font=("Segoe UI Semibold", 10),
+        ).grid(row=0, column=1, rowspan=2, sticky="w", padx=8)
+        xp_text = (
+            f"{xp:,} / {required:,} XP".replace(",", " ")
+            if level and required
+            else f"{xp:,} XP".replace(",", " ") if level else "Uruchom aplikację"
+        )
+        tk.Label(
+            row, text=xp_text, bg=COLORS["input"], fg=COLORS["text"],
+            font=("Segoe UI", 9),
+        ).grid(row=0, column=2, sticky="w", padx=8, pady=(8, 1))
+        progress = ttk.Progressbar(row, style="XP.Horizontal.TProgressbar", maximum=100)
+        progress["value"] = progress_percent(xp, required) if required else 0
+        progress.grid(row=1, column=2, sticky="ew", padx=8, pady=(1, 10), ipady=2)
+        tk.Label(
+            row, text=f"Cel: {goal}\n{format_date(str(updated)) if updated else 'Jeszcze nie zsynchronizowano'}",
+            bg=COLORS["input"], fg=COLORS["muted"], justify="right",
+            font=("Segoe UI", 8),
+        ).grid(row=0, column=3, rowspan=2, sticky="e", padx=(8, 13))
+
+
 class TrackerApp(tk.Tk):
     def __init__(self, db: Database):
         super().__init__()
@@ -1165,6 +1408,8 @@ class TrackerApp(tk.Tk):
         self.champion_images: dict[str, Any] = {}
         self.champion_loading: set[str] = set()
         self.history_champions: dict[str, str] = {}
+        self.progress_share_busy = False
+        self.progress_share_job: str | None = None
 
         self.title("LoL XP Tracker")
         self.geometry("1260x780")
@@ -1183,6 +1428,7 @@ class TrackerApp(tk.Tk):
         manifest_url = self.db.get_setting("update_manifest_url", DEFAULT_MANIFEST_URL)
         if self.db.get_setting("auto_updates", "1") == "1" and manifest_url:
             self.after(9000, lambda: self.check_updates(silent=True))
+        self._schedule_progress_share(7000)
 
     def _configure_style(self) -> None:
         style = ttk.Style(self)
@@ -1256,6 +1502,9 @@ class TrackerApp(tk.Tk):
         StyledButton(self.sidebar, text="Połączenie API", secondary=True, command=self.open_api_settings).pack(
             fill="x", padx=16, pady=4
         )
+        StyledButton(
+            self.sidebar, text="Znajomi", secondary=True, command=self.open_friends
+        ).pack(fill="x", padx=16, pady=4)
         StyledButton(
             self.sidebar, text="Podsumowanie", secondary=True, command=self.open_session_summary
         ).pack(fill="x", padx=16, pady=4)
@@ -1558,6 +1807,7 @@ class TrackerApp(tk.Tk):
         self._refresh_accounts()
         self._refresh_content()
         self.refresh_api_state()
+        self._schedule_progress_share(1800)
 
     def refresh_api_state(self) -> None:
         backend_url = self.db.get_setting("backend_url")
@@ -1907,6 +2157,83 @@ class TrackerApp(tk.Tk):
 
     def open_api_settings(self) -> None:
         ApiSettingsDialog(self)
+
+    def _shared_accounts_payload(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "game_name": account["game_name"],
+                "tag_line": account["tag_line"],
+                "platform": account["platform"],
+                "level": int(account["current_level"]),
+                "xp": int(account["current_xp"]),
+                "xp_required": int(account["xp_required"]),
+                "goal_level": int(account["goal_level"] or 30),
+            }
+            for account in self.db.list_accounts()
+        ]
+
+    def shared_progress_snapshot(self) -> dict[str, Any]:
+        if not (
+            self.db.get_setting("backend_url")
+            and self.db.get_setting("backend_access_token")
+        ):
+            raise RiotApiError(
+                "Najpierw wczytaj zaproszenie do prywatnego serwera w „Połączenie API”.",
+                code="configuration_error",
+            )
+        accounts = self.db.list_accounts()
+        platform = str(accounts[0]["platform"]) if accounts else "EUW1"
+        return self.match_api_client(platform).friends_progress(self._shared_accounts_payload())
+
+    def _schedule_progress_share(self, delay: int = 1500) -> None:
+        if self._closing or not (
+            self.db.get_setting("backend_url")
+            and self.db.get_setting("backend_access_token")
+        ):
+            return
+        if self.progress_share_job is not None:
+            try:
+                self.after_cancel(self.progress_share_job)
+            except tk.TclError:
+                pass
+        self.progress_share_job = self.after(delay, self._share_progress_quietly)
+
+    def _share_progress_quietly(self) -> None:
+        self.progress_share_job = None
+        if self._closing or self.progress_share_busy:
+            return
+        self.progress_share_busy = True
+
+        def runner() -> None:
+            try:
+                self.shared_progress_snapshot()
+            except RiotApiError as error:
+                if not self._closing:
+                    self.after(0, lambda caught=error: self.remember_api_error(caught))
+            except Exception:
+                pass
+            finally:
+                if not self._closing:
+                    self.after(0, self._finish_progress_share)
+
+        threading.Thread(target=runner, daemon=True).start()
+
+    def _finish_progress_share(self) -> None:
+        self.progress_share_busy = False
+
+    def open_friends(self) -> None:
+        if not (
+            self.db.get_setting("backend_url")
+            and self.db.get_setting("backend_access_token")
+        ):
+            messagebox.showinfo(
+                "Najpierw połącz aplikację",
+                "Zakładka znajomych działa po wczytaniu zaproszenia do prywatnego serwera.",
+                parent=self,
+            )
+            ApiSettingsDialog(self)
+            return
+        FriendsDialog(self)
 
     def open_session_summary(self) -> None:
         account = self.current_account()

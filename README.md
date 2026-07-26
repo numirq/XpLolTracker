@@ -1,6 +1,6 @@
 # LoL XP Tracker
 
-Wersja 0.9.1
+Wersja 0.10.0
 
 Desktopowy tracker poziomu konta League of Legends dla Windows. Obsługuje wiele kont i przechowuje ich historie osobno.
 
@@ -44,6 +44,8 @@ Desktopowy tracker poziomu konta League of Legends dla Windows. Obsługuje wiele
 - pokazuje czytelny stan klienta: lobby, kolejkę, wybór bohatera, trwający i zakończony mecz;
 - wysyła opcjonalne powiadomienia Windows po zapisaniu meczu oraz awansie;
 - grupuje urządzenia pod właściwym znajomym, umożliwia wyszukiwanie, filtrowanie i zmianę nazwy profilu.
+- ma zakładkę **Znajomi**, w której osoby korzystające z jednego prywatnego serwera widzą wzajemnie udostępniony poziom, XP, cel i czas ostatniej synchronizacji;
+- automatycznie odświeża udostępniony postęp po zmianie danych konta oraz podczas otwierania listy znajomych.
 
 ## Uruchomienie na Windows
 
@@ -60,6 +62,8 @@ Przy pierwszym uruchomieniu dodaj konto ręcznie albo użyj automatycznego wykry
 Prywatny Cloudflare Worker z folderu [`backend`](backend) przechowuje klucz Riot jako sekret. Właściciel tworzy profil znajomego i wysyła jedno bezterminowe zaproszenie. Każde użyte później Riot ID zostaje automatycznie dopisane do właściwego profilu i działa od razu, a właściciel otrzymuje alert do sprawdzenia.
 
 Nowe konto i nowa instalacja aplikacji nie są blokowane. Serwer dopuszcza żądanie, oznacza je czerwonym alertem i zapisuje zdarzenie w 30-dniowej historii aktywności. Panel 2.0 rozdziela pulpit, znajomych, konta, urządzenia, aktywność i stan systemu.
+
+Po wczytaniu zaproszenia aplikacja udostępnia innym aktywnym profilom wyłącznie Riot ID, serwer, poziom, stan XP, cel i czas synchronizacji. Lokalna historia meczów, kod dostępu oraz dane urządzenia nie są wysyłane na wspólną listę.
 
 Instrukcja backendu i generator kodów znajdują się w [`backend/README.md`](backend/README.md).
 

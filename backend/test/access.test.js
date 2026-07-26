@@ -8,8 +8,10 @@ import {
   authorizeRequest,
   createFriend,
   deleteFriend,
+  friendProgress,
   reviewFriendAccount,
-  rotateFriendCode
+  rotateFriendCode,
+  syncFriendProgress
 } from "../src/access.js";
 import { adminPageResponse } from "../src/admin_page.js";
 import worker from "../src/worker.js";
@@ -48,6 +50,9 @@ class TestD1 {
     );
     this.database.exec(
       readFileSync(new URL("../migrations/0002_auto_added_account_alerts.sql", import.meta.url), "utf8")
+    );
+    this.database.exec(
+      readFileSync(new URL("../migrations/0003_shared_friend_progress.sql", import.meta.url), "utf8")
     );
   }
 
@@ -251,6 +256,93 @@ test("raw friend tokens are never stored in D1", async () => {
   assert.notEqual(stored.token_hash, created.code);
   assert.equal(stored.token_hash.length, 64);
   assert.equal(JSON.stringify(stored).includes(created.code), false);
+});
+
+test("friends can share and view one another's account progress", async () => {
+  const database = new TestD1();
+  const env = {
+    ACCESS_DB: database,
+    ACCESS_RULES: "{}",
+    ADMIN_TOKEN: "admin-secret-with-32-or-more-characters"
+  };
+  const first = await createFriend(env, { name: "Bartek" }, "https://tracker.example");
+  const second = await createFriend(env, { name: "Kacper" }, "https://tracker.example");
+
+  const firstContext = context();
+  const firstResult = await syncFriendProgress(
+    new Request("https://tracker.example/v1/friends/progress", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${first.code}`,
+        "content-type": "application/json",
+        "x-client-instance": "bartek-installation-123456",
+        "x-tracker-version": "0.10.0"
+      }
+    }),
+    env,
+    firstContext,
+    {
+      accounts: [{
+        game_name: "Razorblade",
+        tag_line: "Kiss",
+        platform: "EUW1",
+        level: 24,
+        xp: 1988,
+        xp_required: 2304,
+        goal_level: 30
+      }]
+    }
+  );
+  await Promise.all(firstContext.pending);
+  assert.equal(firstResult.viewer_friend_id, first.friend.id);
+
+  const secondContext = context();
+  await syncFriendProgress(
+    new Request("https://tracker.example/v1/friends/progress", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${second.code}`,
+        "content-type": "application/json",
+        "x-client-instance": "kacper-installation-12345",
+        "x-tracker-version": "0.10.0"
+      }
+    }),
+    env,
+    secondContext,
+    {
+      accounts: [{
+        game_name: "Other",
+        tag_line: "EUW",
+        platform: "EUW1",
+        level: 18,
+        xp: 700,
+        xp_required: 1800,
+        goal_level: 30
+      }]
+    }
+  );
+  await Promise.all(secondContext.pending);
+
+  const shared = await friendProgress(env, first.friend.id);
+  assert.equal(shared.friends.length, 2);
+  assert.equal(shared.friends.find((friend) => friend.name === "Bartek").is_viewer, true);
+  assert.equal(shared.friends.find((friend) => friend.name === "Kacper").accounts[0].current_level, 18);
+  assert.equal(shared.friends.find((friend) => friend.name === "Bartek").accounts[0].current_xp, 1988);
+  assert.equal(JSON.stringify(shared).includes(first.code), false);
+  assert.equal(JSON.stringify(shared).includes(second.code), false);
+});
+
+test("friend progress HTTP route requires a valid permanent friend code", async () => {
+  const database = new TestD1();
+  const env = { ACCESS_DB: database, ACCESS_RULES: "{}" };
+  const denied = await worker.fetch(
+    new Request("https://tracker.example/v1/friends/progress", {
+      headers: { authorization: "Bearer invalid-code-that-is-long-enough" }
+    }),
+    env,
+    context()
+  );
+  assert.equal(denied.status, 401);
 });
 
 test("deleting a friend removes their accounts, devices and activity", async () => {

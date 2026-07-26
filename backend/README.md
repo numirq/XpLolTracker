@@ -1,6 +1,6 @@
 # Prywatny backend LoL XP Tracker
 
-Cloudflare Worker ukrywa klucz Riot API przed aplikacjami desktopowymi. Wersja 0.10 zawiera panel zarządzania 2.0, bezterminowe profile znajomych, automatyczne dopisywanie Riot ID oraz alerty kont i urządzeń.
+Cloudflare Worker ukrywa klucz Riot API przed aplikacjami desktopowymi. Wersja 0.11 zawiera panel zarządzania 2.0, bezterminowe profile znajomych, automatyczne dopisywanie Riot ID, alerty kont i urządzeń oraz wspólny podgląd postępu.
 
 ## Jak działa dostęp
 
@@ -12,6 +12,7 @@ Cloudflare Worker ukrywa klucz Riot API przed aplikacjami desktopowymi. Wersja 0
 - nowe urządzenie nie jest blokowane — zostaje dopuszczone i oznaczone czerwonym alertem;
 - surowe kody i adresy IP nie są zapisywane;
 - minimalny dziennik aktywności jest automatycznie czyszczony po 30 dniach.
+- aktywni znajomi widzą wzajemnie wyłącznie Riot ID, serwer, poziom, XP, cel i czas synchronizacji.
 
 Identyfikator urządzenia oznacza losowy identyfikator instalacji trackera, a nie sprzętowy fingerprint. Zwykłe przekazanie kodu innej osobie utworzy alert o nowym urządzeniu, ale system nie stanowi zabezpieczenia przed celowym skopiowaniem całego profilu aplikacji.
 
