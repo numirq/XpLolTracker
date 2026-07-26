@@ -32,6 +32,15 @@ class UpdateInfo:
     notes: str = ""
 
 
+def _clean_child_environment(environment: dict[str, str] | None = None) -> dict[str, str]:
+    cleaned = dict(os.environ if environment is None else environment)
+    for key in list(cleaned):
+        upper = key.upper()
+        if upper in {"TCL_LIBRARY", "TK_LIBRARY", "_MEIPASS2"} or upper.startswith("_PYI_"):
+            cleaned.pop(key, None)
+    return cleaned
+
+
 def version_tuple(version: str) -> tuple[int, ...]:
     try:
         return tuple(int(part) for part in version.strip().lstrip("v").split("."))
@@ -102,6 +111,13 @@ def prepare_update(info: UpdateInfo, app_directory: Path) -> Path:
     restart = app_directory / "start.bat"
     script.write_text(
         "@echo off\n"
+        'set "TCL_LIBRARY="\n'
+        'set "TK_LIBRARY="\n'
+        'set "_MEIPASS2="\n'
+        'set "_PYI_APPLICATION_HOME_DIR="\n'
+        'set "_PYI_ARCHIVE_FILE="\n'
+        'set "_PYI_PARENT_PROCESS_LEVEL="\n'
+        'set "_PYI_SPLASH_IPC="\n'
         "timeout /t 3 /nobreak >nul\n"
         f'xcopy /E /I /Y "{source}\\*" "{app_directory}\\" >nul\n'
         f'start "" "{restart}"\n'
@@ -119,4 +135,5 @@ def launch_prepared_update(script: Path) -> None:
         cwd=str(script.parent),
         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
         close_fds=True,
+        env=_clean_child_environment(),
     )
