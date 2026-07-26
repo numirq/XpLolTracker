@@ -13,7 +13,7 @@ from lol_tracker.database import Database
 from lol_tracker.lcu_client import LcuClient
 from lol_tracker.riot_api import RiotApiClient, RiotApiError, parse_backend_invitation
 from lol_tracker.ui import TrackerApp
-from lol_tracker.updater import version_tuple
+from lol_tracker.updater import _clean_child_environment, version_tuple
 from lol_tracker.xp import (
     calculate_xp_gain,
     games_to_level,
@@ -256,7 +256,7 @@ class RiotParserTests(unittest.TestCase):
         request = opener.call_args.args[0]
         self.assertEqual(request.headers["Authorization"], "Bearer friend-token-with-more-than-24-characters")
         self.assertEqual(request.headers["X-client-instance"], "local-installation-identifier-123")
-        self.assertEqual(request.headers["X-tracker-version"], "0.10.0")
+        self.assertEqual(request.headers["X-tracker-version"], "0.10.1")
         self.assertIn("game_name=Test+Player", request.full_url)
         self.assertEqual(parsed["queue_name"], "Ranked Solo/Duo")
         self.assertEqual(parsed["source"], "private_backend")
@@ -390,6 +390,24 @@ class UpdaterTests(unittest.TestCase):
     def test_semantic_version_comparison(self):
         self.assertGreater(version_tuple("0.5.0"), version_tuple("0.4.9"))
         self.assertEqual(version_tuple("v1.2.3"), (1, 2, 3))
+
+    def test_removes_pyinstaller_tcl_environment_before_restart(self):
+        cleaned = _clean_child_environment(
+            {
+                "PATH": "C:\\Windows",
+                "TCL_LIBRARY": "C:\\Temp\\_MEI123\\_tcl_data",
+                "TK_LIBRARY": "C:\\Temp\\_MEI123\\_tk_data",
+                "_MEIPASS2": "C:\\Temp\\_MEI123",
+                "_PYI_APPLICATION_HOME_DIR": "C:\\Temp\\_MEI123",
+                "CUSTOM_SETTING": "kept",
+            }
+        )
+        self.assertEqual(cleaned["PATH"], "C:\\Windows")
+        self.assertEqual(cleaned["CUSTOM_SETTING"], "kept")
+        self.assertNotIn("TCL_LIBRARY", cleaned)
+        self.assertNotIn("TK_LIBRARY", cleaned)
+        self.assertNotIn("_MEIPASS2", cleaned)
+        self.assertNotIn("_PYI_APPLICATION_HOME_DIR", cleaned)
 
 
 class ChampionIconTests(unittest.TestCase):
